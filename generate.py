@@ -13,7 +13,7 @@ from modules.preprocess import preprocess_dicom, postprocess_tensor
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydicom")
 
-def inference(args, soft_tissue_args, lung_args):
+def generate(args, soft_tissue_args, lung_args):
     """Soft-tissue 및 Lung CycleGAN 모델을 사용하여 DICOM 파일을 추론하고 통합"""
     
     # GPU 장치 설정
@@ -216,8 +216,8 @@ if __name__ == "__main__":
     soft_tissue_args = get_soft_tissue_infer_args() # Soft-tissue CycleGAN 추론 인자
     lung_args = get_lung_infer_args() # Lung CycleGAN 추론 인자
     
-    # 추론 실행
-    inference(args, soft_tissue_args, lung_args)
+    # 생성 실행
+    generate(args, soft_tissue_args, lung_args)
     
     # 통합 실행
     integrate(args)
