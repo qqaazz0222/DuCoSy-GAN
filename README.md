@@ -97,6 +97,8 @@ pip install -r requirements.txt
 python train.py
 ```
 
+TBU
+
 ## Generate
 
 CT 영상 생성을 위해 아래 명령어를 실행합니다.
@@ -105,6 +107,8 @@ CT 영상 생성을 위해 아래 명령어를 실행합니다.
 python generate.py
 ```
 
+TBU
+
 ## Anonymize
 
 생성된 CT 영상에 익명화를 적용하기 위해 아래 명령어를 실행합니다.
@@ -112,3 +116,5 @@ python generate.py
 ```bash
 python anonymize.py
 ```
+
+TBU
