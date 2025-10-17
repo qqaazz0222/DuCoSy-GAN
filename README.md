@@ -1,4 +1,4 @@
-# DUCOSY-GAN: Dual HU-Range Complementary Synthesis GAN
+# DuCoSy-GAN: Dual HU-Range Complementary Synthesis GAN
 
 High-Fidelity Contrast-Enhanced CT Generation Using Complementary Synthesis of Dual HU-Range Targeted GANs
 
