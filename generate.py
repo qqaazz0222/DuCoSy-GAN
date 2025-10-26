@@ -1,5 +1,6 @@
 import os
 import glob
+import shutil
 import pydicom
 import traceback
 import numpy as np
@@ -122,7 +123,7 @@ def generate(args, soft_tissue_args, lung_args):
                         output_lung_dcm.PixelData = lung_new_pixel_data.tobytes()
 
                         output_filename = os.path.basename(dcm_path)
-                        output_dcm.save_as(os.path.join(working_raw_folder, output_filename))
+                        shutil.copy(dcm_path, os.path.join(working_raw_folder, output_filename))
                         output_soft_tissue_dcm.save_as(os.path.join(working_soft_tissue_folder, output_filename))
                         output_lung_dcm.save_as(os.path.join(working_lung_folder, output_filename))
 
@@ -132,7 +133,7 @@ def generate(args, soft_tissue_args, lung_args):
                         import traceback
                         traceback.print_exc() # 전체 traceback을 확인하기 위해 추가
     
-    print("\Generation complete.")
+    print("\nGeneration complete.")
     
 
 def integrate(args, soft_tissue_args, lung_args):
@@ -192,8 +193,6 @@ def integrate(args, soft_tissue_args, lung_args):
                         continue
 
                     # DICOM 파일 로드
-                    print(raw_dcm_path)
-                    exit()
                     raw_dcm = pydicom.dcmread(raw_dcm_path)
                     soft_tissue_dcm = pydicom.dcmread(soft_tissue_dcm_path)
                     lung_dcm = pydicom.dcmread(lung_dcm_path)
@@ -238,6 +237,7 @@ def integrate(args, soft_tissue_args, lung_args):
                 except Exception as e:
                     print(f"오류 발생: 파일 {lung_dcm_path} 처리 중 문제 발생. 에러: {e}")
                     traceback.print_exc()
+                    exit()
                     
     print("\nIntegration complete.")
 
@@ -250,7 +250,7 @@ if __name__ == "__main__":
     lung_args = get_lung_infer_args() # Lung CycleGAN 추론 인자
     
     # 생성 실행
-    # generate(args, soft_tissue_args, lung_args)
+    generate(args, soft_tissue_args, lung_args)
     
     # 통합 실행
     integrate(args, soft_tissue_args, lung_args)

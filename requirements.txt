@@ -18,3 +18,7 @@ python-gdcm
 tabulate
 gradio
 rich
+pylibjpeg
+pylibjpeg-openjpeg
+pylibjpeg-libjpeg
+python-rle
