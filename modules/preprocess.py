@@ -51,7 +51,7 @@ def postprocess_tensor(output_tensor, original_dcm, hu_min, hu_max):
     """모델 출력을 받아 DICOM 저장을 위한 pixel array로 변환합니다."""
     # 1. NumPy 배열로 변환
     output_array = output_tensor.cpu().squeeze().numpy()
-    
+
     # 2. HU 값으로 역정규화 ([-1, 1] -> [hu_min, hu_max])
     denormalized_hu = (output_array + 1.0) / 2.0 * (hu_max - hu_min) + hu_min
     
@@ -61,7 +61,9 @@ def postprocess_tensor(output_tensor, original_dcm, hu_min, hu_max):
     
     # DICOM 표준에 따른 역변환: StoredValue = (HU - RescaleIntercept) / RescaleSlope
     new_pixel_data = (denormalized_hu - intercept) / slope
-    
+
+    # print(f"Debug: new_pixel_data min={np.min(new_pixel_data)}, max={np.max(new_pixel_data)}\n")
+
     # 4. 원본 DICOM의 데이터 타입으로 변환 (e.g., int16)
     new_pixel_data = new_pixel_data.astype(original_dcm.pixel_array.dtype)
     

@@ -1,9 +1,11 @@
 import os
 import glob
 import pydicom
+import traceback
 import numpy as np
 import torch
 import torchvision.transforms as transforms
+from copy import deepcopy
 from tqdm import tqdm
 
 from modules.argmanager import get_common_infer_args, get_soft_tissue_infer_args, get_lung_infer_args
@@ -70,9 +72,11 @@ def generate(args, soft_tissue_args, lung_args):
 
                 # 출력 폴더 생성 (soft_tissue 및 lung 서브폴더 포함)
                 working_patient_folder = os.path.join(working_dir, patient_id)
+                working_raw_folder = os.path.join(working_patient_folder, "raw")
                 working_soft_tissue_folder = os.path.join(working_patient_folder, "soft_tissue")
                 working_lung_folder = os.path.join(working_patient_folder, "lung")
                 os.makedirs(working_patient_folder, exist_ok=True)
+                os.makedirs(working_raw_folder, exist_ok=True)
                 os.makedirs(working_soft_tissue_folder, exist_ok=True)
                 os.makedirs(working_lung_folder, exist_ok=True)
 
@@ -94,16 +98,31 @@ def generate(args, soft_tissue_args, lung_args):
                         soft_tissue_new_pixel_data = postprocess_tensor(output_soft_tissue_tensor_resized, original_dcm, soft_tissue_args.hu_min, soft_tissue_args.hu_max)
                         lung_new_pixel_data = postprocess_tensor(output_lung_tensor_resized, original_dcm, lung_args.hu_min, lung_args.hu_max)
 
+                        soft_tissue_raw_range = (np.min(soft_tissue_new_pixel_data), np.max(soft_tissue_new_pixel_data))
+                        lung_raw_range = (np.min(lung_new_pixel_data), np.max(lung_new_pixel_data))
+
+                        # print(f"Debug: soft-tissue hu range: {soft_tissue_raw_range[0]} to {soft_tissue_raw_range[1]}, lung hu range: {lung_raw_range[0]} to {lung_raw_range[1]}\n")
+
                         output_dcm = pydicom.dcmread(dcm_path)
                         output_dcm.SeriesDescription = f"Synthetic CECT (from {original_dcm.SeriesDescription})"
                         output_dcm.file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
                         
-                        output_soft_tissue_dcm = output_dcm.copy()
-                        output_lung_dcm = output_dcm.copy()
+                        output_soft_tissue_dcm = deepcopy(output_dcm)
+                        output_lung_dcm = deepcopy(output_dcm)
+                        # print(f"Debug: soft-tissue hu range: {np.min(soft_tissue_new_pixel_data)} to {np.max(soft_tissue_new_pixel_data)}, lung hu range: {np.min(lung_new_pixel_data)} to {np.max(lung_new_pixel_data)}\n")
+                        
+                        output_soft_tissue_dcm.SmallestImagePixelValue = int(soft_tissue_raw_range[0])
+                        output_soft_tissue_dcm.LargestImagePixelValue = int(soft_tissue_raw_range[1])
+                        # print(f"Debug: soft-tissue hu range: {soft_tissue_raw_range}")
+                        output_lung_dcm.SmallestImagePixelValue = int(lung_raw_range[0])
+                        output_lung_dcm.LargestImagePixelValue = int(lung_raw_range[1])
+                        # print(f"Debug: lung hu range: {lung_raw_range}")
+
                         output_soft_tissue_dcm.PixelData = soft_tissue_new_pixel_data.tobytes()
                         output_lung_dcm.PixelData = lung_new_pixel_data.tobytes()
 
                         output_filename = os.path.basename(dcm_path)
+                        output_dcm.save_as(os.path.join(working_raw_folder, output_filename))
                         output_soft_tissue_dcm.save_as(os.path.join(working_soft_tissue_folder, output_filename))
                         output_lung_dcm.save_as(os.path.join(working_lung_folder, output_filename))
 
@@ -113,10 +132,10 @@ def generate(args, soft_tissue_args, lung_args):
                         import traceback
                         traceback.print_exc() # 전체 traceback을 확인하기 위해 추가
     
-    print("\nInference complete.")
+    print("\Generation complete.")
     
 
-def integrate(args):
+def integrate(args, soft_tissue_args, lung_args):
     """Lung 및 Soft-tissue CycleGAN 모델의 결과물을 통합"""
 
     def get_hu_array(dcm):
@@ -125,7 +144,11 @@ def integrate(args):
         slope = dcm.RescaleSlope if 'RescaleSlope' in dcm else 1
         hu_array = dcm.pixel_array.astype(np.float32) * slope + intercept
         return hu_array
-
+    
+    # 범위 설정
+    mask_threshold_hu = lung_args.hu_max - 10
+    raw_range = (min(soft_tissue_args.hu_min, lung_args.hu_min), max(soft_tissue_args.hu_max, lung_args.hu_max))
+    
     # 각 데이터셋 폴더 순회
     for dataset_name in args.dataset_names:
         working_dir = os.path.join(args.working_dir_root, dataset_name)
@@ -140,12 +163,16 @@ def integrate(args):
         # 환자 디렉토리 순회
         for patient_dir in tqdm(patient_dirs, desc=f"Patients in {dataset_name}"):
             patient_id = os.path.basename(patient_dir)
+            raw_base_path = os.path.join(patient_dir, "raw")
             soft_tissue_base_path = os.path.join(patient_dir, "soft_tissue")
             lung_base_path = os.path.join(patient_dir, "lung")
             output_base_path = os.path.join(output_dir, patient_id)
             os.makedirs(output_base_path, exist_ok=True)
 
-            
+            raw_dcm_list = sorted(glob.glob(os.path.join(raw_base_path, "*.dcm")))
+            if not raw_dcm_list:
+                print(f"No raw DICOM files found for patient {patient_id}. Skipping integration.")
+                continue
             soft_tissue_dcm_list = sorted(glob.glob(os.path.join(soft_tissue_base_path, "*.dcm")))
             if not soft_tissue_dcm_list:
                 print(f"No soft tissue DICOM files found for patient {patient_id}. Skipping integration.")
@@ -154,31 +181,38 @@ def integrate(args):
             if not lung_dcm_list:
                 print(f"No lung DICOM files found for patient {patient_id}. Skipping integration.")
                 continue
-            if len(soft_tissue_dcm_list) != len(lung_dcm_list):
-                print(f"Warning: Mismatch in number of DICOM files for patient {patient_id}. Soft tissue: {len(soft_tissue_dcm_list)}, Lung: {len(lung_dcm_list)}. Proceeding with integration.")
+            if len(raw_dcm_list) != len(soft_tissue_dcm_list) != len(lung_dcm_list):
+                print(f"Warning: Mismatch in number of DICOM files for patient {patient_id}. Raw: {len(raw_dcm_list)}, Soft tissue: {len(soft_tissue_dcm_list)}, Lung: {len(lung_dcm_list)}. Proceeding with integration.")
                 continue
 
-            for idx, (soft_tissue_dcm_path, lung_dcm_path) in enumerate(zip(soft_tissue_dcm_list, lung_dcm_list)):
+            for idx, (raw_dcm_path, soft_tissue_dcm_path, lung_dcm_path) in enumerate(zip(raw_dcm_list, soft_tissue_dcm_list, lung_dcm_list)):
                 try:
-                    if os.path.basename(soft_tissue_dcm_path) != os.path.basename(lung_dcm_path):
+                    if os.path.basename(raw_dcm_path) != os.path.basename(soft_tissue_dcm_path) != os.path.basename(lung_dcm_path):
                         print(f"Warning: Filename mismatch between soft tissue and lung DICOM files: {soft_tissue_dcm_path} vs {lung_dcm_path}. Skipping this pair.")
                         continue
 
                     # DICOM 파일 로드
+                    print(raw_dcm_path)
+                    exit()
+                    raw_dcm = pydicom.dcmread(raw_dcm_path)
                     soft_tissue_dcm = pydicom.dcmread(soft_tissue_dcm_path)
                     lung_dcm = pydicom.dcmread(lung_dcm_path)
                     
                     # 이미지 로드
+                    raw_pixel_array = raw_dcm.pixel_array
                     soft_tissue_pixel_array = soft_tissue_dcm.pixel_array
                     lung_pixel_array = lung_dcm.pixel_array
                     merged_pixel_array = lung_pixel_array.copy()
                     
                     # HU 배열 계산 및 마스크 생성
+                    raw_hu_array = get_hu_array(raw_dcm)
+                    raw_mask = np.logical_or(raw_hu_array > raw_range[1], raw_hu_array < raw_range[0])
                     lung_hu_array = get_hu_array(lung_dcm)
-                    mask = lung_hu_array >= -160.0  
+                    mask = lung_hu_array >= mask_threshold_hu 
                     
                     # 마스크를 사용하여 픽셀 교체
                     merged_pixel_array[mask] = soft_tissue_pixel_array[mask]
+                    merged_pixel_array[raw_mask] = raw_pixel_array[raw_mask]
                     
                     # 최종 DICOM 객체 생성 및 저장
                     output_dcm = soft_tissue_dcm.copy()
@@ -203,7 +237,6 @@ def integrate(args):
                     
                 except Exception as e:
                     print(f"오류 발생: 파일 {lung_dcm_path} 처리 중 문제 발생. 에러: {e}")
-                    import traceback
                     traceback.print_exc()
                     
     print("\nIntegration complete.")
@@ -217,10 +250,10 @@ if __name__ == "__main__":
     lung_args = get_lung_infer_args() # Lung CycleGAN 추론 인자
     
     # 생성 실행
-    generate(args, soft_tissue_args, lung_args)
+    # generate(args, soft_tissue_args, lung_args)
     
     # 통합 실행
-    integrate(args)
+    integrate(args, soft_tissue_args, lung_args)
 
     print("\nAll processing complete!")
     print(f" - Final integrated DICOM files are saved in: {args.output_dir_root}")
