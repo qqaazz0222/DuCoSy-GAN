@@ -36,7 +36,7 @@ def anonymize(args, mapping_path):
     
     # 출력 디렉토리 생성
     original_dir = os.path.join(args.input_dir_root)
-    sCECT_dir = os.path.join(args.output_dir_root)
+    generated_dir = os.path.join(args.output_dir_root)
     output_dir = os.path.join(args.output_dir_root, "anonymized")
     output_pixel_dir = os.path.join(args.output_dir_root, "anonymized_pixel")
     
@@ -50,7 +50,7 @@ def anonymize(args, mapping_path):
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(output_pixel_dir, exist_ok=True)
 
-    for category, category_dir in [("original", original_dir), ("sCECT", sCECT_dir)]:
+    for category, category_dir in [("original", original_dir), ("generated", generated_dir)]:
         # 각 데이터셋 폴더 순회
         for dataset_name in args.dataset_names:
             data_dir = os.path.join(category_dir, dataset_name)
@@ -63,7 +63,7 @@ def anonymize(args, mapping_path):
                 patient_id = os.path.basename(patient_dir)
                 if category == "original":
                     patient_dir = os.path.join(patient_dir, args.ncct_folder)
-                anonymized_id = str(uuid.uuid4())  # UUID로 익명화된 ID 생성
+                anonymized_id = str(uuid.uuid4().hex)  # UUID로 익명화된 ID 생성
                 dcm_list = sorted(glob.glob(os.path.join(patient_dir, '*.dcm')))
                 
                 # 익명화 매핑 파일 업데이트

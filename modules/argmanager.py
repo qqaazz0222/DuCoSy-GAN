@@ -10,9 +10,10 @@ def get_common_infer_args():
     parser.add_argument("--input_dir_root", type=str, default="./data/input", help="Root directory of the input datasets")
     parser.add_argument("--working_dir_root", type=str, default="./data/working", help="Root directory for saving inference results")
     parser.add_argument("--output_dir_root", type=str, default="./data/output", help="Root directory for saving merged results")
-    # parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kangwon_National_Univ", "Kyunghee_Univ"], help="List of dataset folder names to process")
-    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kangwon_National_Univ"], help="List of dataset folder names to process")
+    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kangwon_National_Univ", "Kyunghee_Univ"], help="List of dataset folder names to process")
+    # parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kyunghee_Univ"], help="List of dataset folder names to process")
     parser.add_argument("--ncct_folder", type=str, default="POST VUE", help="Folder name for non-contrast CT")
+    parser.add_argument("--cect_folder", type=str, default="POST STD", help="Folder name for contrast-enhanced CT")
     
     # 전처리 관련 인자
     parser.add_argument("--img_size", type=int, default=512, help="Size of images for model input")

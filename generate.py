@@ -235,7 +235,7 @@ def integrate(args, soft_tissue_args, lung_args):
                     output_dcm.save_as(output_dcm_path)
                     
                 except Exception as e:
-                    print(f"오류 발생: 파일 {lung_dcm_path} 처리 중 문제 발생. 에러: {e}")
+                    print(f"Error Occurred: error on processing file {lung_dcm_path}. Message: {e}")
                     traceback.print_exc()
                     exit()
                     
