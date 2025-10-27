@@ -51,6 +51,7 @@ def anonymize(args, mapping_path):
     os.makedirs(output_pixel_dir, exist_ok=True)
 
     for category, category_dir in [("original", original_dir), ("generated", generated_dir)]:
+        print(f"\nProcessing category: {category.upper()}")
         # 각 데이터셋 폴더 순회
         for dataset_name in args.dataset_names:
             data_dir = os.path.join(category_dir, dataset_name)
@@ -62,8 +63,8 @@ def anonymize(args, mapping_path):
             for patient_dir in tqdm(patient_dirs, desc=f"Patients in {dataset_name}"):
                 patient_id = os.path.basename(patient_dir)
                 if category == "original":
-                    patient_dir = os.path.join(patient_dir, args.ncct_folder)
-                anonymized_id = str(uuid.uuid4().hex)  # UUID로 익명화된 ID 생성
+                    patient_dir = os.path.join(patient_dir, args.cect_folder)
+                anonymized_id = str(uuid.uuid4().hex)[:8]  # UUID로 익명화된 ID 생성
                 dcm_list = sorted(glob.glob(os.path.join(patient_dir, '*.dcm')))
                 
                 # 익명화 매핑 파일 업데이트
