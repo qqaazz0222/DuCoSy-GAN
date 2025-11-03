@@ -12,6 +12,7 @@ from tqdm import tqdm
 from modules.argmanager import get_common_infer_args, get_soft_tissue_infer_args, get_lung_infer_args
 from modules.model import Generator
 from modules.preprocess import preprocess_dicom, postprocess_tensor
+from modules.postprocess import postprocess_ct_volume
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydicom")
@@ -102,22 +103,18 @@ def generate(args, soft_tissue_args, lung_args):
                         soft_tissue_raw_range = (np.min(soft_tissue_new_pixel_data), np.max(soft_tissue_new_pixel_data))
                         lung_raw_range = (np.min(lung_new_pixel_data), np.max(lung_new_pixel_data))
 
-                        # print(f"Debug: soft-tissue hu range: {soft_tissue_raw_range[0]} to {soft_tissue_raw_range[1]}, lung hu range: {lung_raw_range[0]} to {lung_raw_range[1]}\n")
-
                         output_dcm = pydicom.dcmread(dcm_path)
                         output_dcm.SeriesDescription = f"Synthetic CECT (from {original_dcm.SeriesDescription})"
                         output_dcm.file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
                         
                         output_soft_tissue_dcm = deepcopy(output_dcm)
                         output_lung_dcm = deepcopy(output_dcm)
-                        # print(f"Debug: soft-tissue hu range: {np.min(soft_tissue_new_pixel_data)} to {np.max(soft_tissue_new_pixel_data)}, lung hu range: {np.min(lung_new_pixel_data)} to {np.max(lung_new_pixel_data)}\n")
-                        
+                    
                         output_soft_tissue_dcm.SmallestImagePixelValue = int(soft_tissue_raw_range[0])
                         output_soft_tissue_dcm.LargestImagePixelValue = int(soft_tissue_raw_range[1])
-                        # print(f"Debug: soft-tissue hu range: {soft_tissue_raw_range}")
+                        
                         output_lung_dcm.SmallestImagePixelValue = int(lung_raw_range[0])
                         output_lung_dcm.LargestImagePixelValue = int(lung_raw_range[1])
-                        # print(f"Debug: lung hu range: {lung_raw_range}")
 
                         output_soft_tissue_dcm.PixelData = soft_tissue_new_pixel_data.tobytes()
                         output_lung_dcm.PixelData = lung_new_pixel_data.tobytes()
@@ -185,6 +182,8 @@ def integrate(args, soft_tissue_args, lung_args):
             if len(raw_dcm_list) != len(soft_tissue_dcm_list) != len(lung_dcm_list):
                 print(f"Warning: Mismatch in number of DICOM files for patient {patient_id}. Raw: {len(raw_dcm_list)}, Soft tissue: {len(soft_tissue_dcm_list)}, Lung: {len(lung_dcm_list)}. Proceeding with integration.")
                 continue
+            
+            merged_volume = []
 
             for idx, (raw_dcm_path, soft_tissue_dcm_path, lung_dcm_path) in enumerate(zip(raw_dcm_list, soft_tissue_dcm_list, lung_dcm_list)):
                 try:
@@ -207,12 +206,31 @@ def integrate(args, soft_tissue_args, lung_args):
                     raw_hu_array = get_hu_array(raw_dcm)
                     raw_mask = np.logical_or(raw_hu_array > raw_range[1], raw_hu_array < raw_range[0])
                     lung_hu_array = get_hu_array(lung_dcm)
-                    mask = lung_hu_array >= mask_threshold_hu 
+                    mask = lung_hu_array > mask_threshold_hu 
                     
                     # 마스크를 사용하여 픽셀 교체
                     merged_pixel_array[mask] = soft_tissue_pixel_array[mask]
                     merged_pixel_array[raw_mask] = raw_pixel_array[raw_mask]
                     
+                    merged_volume.append(merged_pixel_array)
+                    
+                except Exception as e:
+                    print(f"Error Occurred: error on processing file {soft_tissue_dcm_path}. Message: {e}")
+                    traceback.print_exc()
+                    exit()
+
+            # 후처리 적용
+            merged_volume = np.array(merged_volume)
+            merged_volume = postprocess_ct_volume(merged_volume, method='gaussian3d',
+                                                    sigma_z=0.75, sigma_xy=0.5,
+                                                    enhance_sharpness=True, sharpen_amount=0.7, sharpen_radius=1.0)
+            
+            # 후처리된 슬라이스 저장
+            for idx, soft_tissue_dcm_path in enumerate(soft_tissue_dcm_list):
+                try:
+                    soft_tissue_dcm = pydicom.dcmread(soft_tissue_dcm_path)
+                    merged_pixel_array = merged_volume[idx]
+
                     # 최종 DICOM 객체 생성 및 저장
                     output_dcm = soft_tissue_dcm.copy()
                     output_dcm.PixelData = merged_pixel_array.tobytes()
@@ -235,7 +253,7 @@ def integrate(args, soft_tissue_args, lung_args):
                     output_dcm.save_as(output_dcm_path)
                     
                 except Exception as e:
-                    print(f"Error Occurred: error on processing file {lung_dcm_path}. Message: {e}")
+                    print(f"Error Occurred: error on processing file {soft_tissue_dcm_path}. Message: {e}")
                     traceback.print_exc()
                     exit()
                     

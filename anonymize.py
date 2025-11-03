@@ -6,6 +6,7 @@ import shutil
 import pydicom
 import numpy as np
 from tqdm import tqdm
+import nibabel as nib
 
 from modules.argmanager import get_common_infer_args
 
@@ -31,6 +32,13 @@ def update_mapping(mapping_path, category, site, original_id, anonymized_id):
         writer.writerow([category, site, original_id, anonymized_id])
         
 
+def raw_to_hu(raw_pixel_array, rescale_slope, rescale_intercept):
+    """Raw Pixel Data를 HU 단위로 변환"""
+    hu_array = raw_pixel_array.astype(np.float32) * rescale_slope + rescale_intercept
+    hu_array = hu_array.astype(np.int16)
+    return hu_array
+    
+
 def anonymize(args, mapping_path):
     """DICOM 파일 익명화"""
     
@@ -55,6 +63,7 @@ def anonymize(args, mapping_path):
         # 각 데이터셋 폴더 순회
         for dataset_name in args.dataset_names:
             data_dir = os.path.join(category_dir, dataset_name)
+            mask_dir = os.path.join(args.output_dir_root, "masked", dataset_name)
             
             # 환자 디렉토리 검색
             patient_dirs = sorted([d for d in glob.glob(os.path.join(data_dir, '*')) if os.path.isdir(d)])
@@ -64,12 +73,24 @@ def anonymize(args, mapping_path):
                 patient_id = os.path.basename(patient_dir)
                 if category == "original":
                     patient_dir = os.path.join(patient_dir, args.cect_folder)
+                    
+                print(">>> Processing patient ID:", patient_id, category, patient_dir)
                 anonymized_id = str(uuid.uuid4().hex)[:8]  # UUID로 익명화된 ID 생성
+                mask_file_path = os.path.join(mask_dir, patient_id + '.nii')
                 dcm_list = sorted(glob.glob(os.path.join(patient_dir, '*.dcm')))
                 
                 # 익명화 매핑 파일 업데이트
                 update_mapping(mapping_path, category, dataset_name, patient_id, anonymized_id)
                 
+                if args.apply_masking:
+                    if not os.path.exists(mask_file_path):
+                        print(f"  ✗ Mask file not found for patient {patient_id} in dataset {dataset_name}, skipping masking.")
+                        continue
+                    cur_mask = nib.load(mask_file_path).get_fdata()
+                    cardio_range = [51, 68]
+                    heart_mask = np.where((cur_mask >= cardio_range[0]) & (cur_mask <= cardio_range[1]))
+                    if not np.any(heart_mask):
+                        print(f"  ✗ No heart regions found in mask for patient {patient_id} in dataset {dataset_name}, skipping masking.")
                 # Pixel Data 초기화
                 pixel_data_list = []
                 
@@ -94,13 +115,19 @@ def anonymize(args, mapping_path):
                         dcm.SeriesNumber = "1"
                         dcm.SeriesDescription = "-"
                         z_position = dcm.get('ImagePositionPatient', [0.0, 0.0, 0.0])[2]
-                        pixel_data_list.append([dcm.pixel_array, z_position])
+                        hu_array = raw_to_hu(dcm.pixel_array, dcm.RescaleSlope, dcm.RescaleIntercept)
+                        pixel_data_list.append([hu_array, z_position])
                         
+                        if args.apply_masking:
+                            hu_array[heart_mask[idx, :, :]] = -1000  # Heart 영역을 공기값으로 대체
+                            # 변경된 픽셀 데이터를 DICOM에 다시 할당
+                            dcm.PixelData = hu_array.astype(dcm.pixel_array.dtype).tobytes
+
                         # 익명화된 DICOM 파일 저장
                         output_patient_dir = os.path.join(output_dir, anonymized_id)
                         os.makedirs(output_patient_dir, exist_ok=True)
                         output_dcm_path = os.path.join(output_patient_dir, f"{idx:04d}.dcm")
-                        # dcm.save_as(output_dcm_path)
+                        # dcm.save_as(output_dcm_path) # ! DICOM 저장 주석 처리
                         
                     except Exception as e:
                         print(f"Could not process file {dcm_path}. Error: {e}")

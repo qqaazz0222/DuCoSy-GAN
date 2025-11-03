@@ -22,3 +22,5 @@ pylibjpeg
 pylibjpeg-openjpeg
 pylibjpeg-libjpeg
 python-rle
+nibabel
+totalsegmentator
