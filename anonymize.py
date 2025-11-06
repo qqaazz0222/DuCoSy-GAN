@@ -74,7 +74,6 @@ def anonymize(args, mapping_path):
                 if category == "original":
                     patient_dir = os.path.join(patient_dir, args.cect_folder)
                     
-                print(">>> Processing patient ID:", patient_id, category, patient_dir)
                 anonymized_id = str(uuid.uuid4().hex)[:8]  # UUID로 익명화된 ID 생성
                 mask_file_path = os.path.join(mask_dir, patient_id + '.nii')
                 dcm_list = sorted(glob.glob(os.path.join(patient_dir, '*.dcm')))
@@ -109,7 +108,7 @@ def anonymize(args, mapping_path):
                         dcm.ReferringPhysicianName = "Anonymized"
                         dcm.ImageType = ["PRIMARY", "AXIAL"]
                         dcm.StudyID = "1"
-                        dcm.StudyDate = "19000101"
+                        dcm.StudyDate = "20000101"
                         dcm.StudyTime = "000000"
                         dcm.StudyDescription = "-"
                         dcm.SeriesNumber = "1"

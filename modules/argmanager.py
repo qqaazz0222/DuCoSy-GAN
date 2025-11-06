@@ -18,6 +18,10 @@ def get_common_infer_args():
     
     # 전처리 관련 인자
     parser.add_argument("--img_size", type=int, default=512, help="Size of images for model input")
+    parser.add_argument("--batch_size", type=int, default=2, help="Number of patients to process in parallel")
+    
+    # 모델 관련 인자
+    parser.add_argument("--nmodel_path", type=str, default="./checkpoints/Normal_Map_Unet.pth", help="Path to the trained Normal Map U-Net model")
 
     # 시스템 관련 인자
     parser.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use for inference")

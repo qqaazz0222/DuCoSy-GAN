@@ -11,8 +11,9 @@ from tqdm import tqdm
 
 from modules.argmanager import get_common_infer_args, get_soft_tissue_infer_args, get_lung_infer_args
 from modules.model import Generator
+from modules.nmodel.inference import load_model, predict_volume, nomalize_volume
 from modules.preprocess import preprocess_dicom, postprocess_tensor
-from modules.postprocess import postprocess_ct_volume
+from modules.postprocess import postprocess_ct_volume, apply_diffmap
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydicom")
@@ -27,7 +28,7 @@ def generate(args, soft_tissue_args, lung_args):
     # 모델 초기화
     soft_tissue_model = Generator(input_channels=1, num_residual_blocks=9).to(device)
     lung_model = Generator(input_channels=1, num_residual_blocks=9).to(device)
-    print(f"Using Checkpoint: Soft Tissue: {soft_tissue_args.model_path}, Lung: {lung_args.model_path}")
+    print(f"Using Checkpoint:\n  - Soft Tissue: {soft_tissue_args.model_path}\n  - Lung: {lung_args.model_path}")
     
     # 가중치 로드
     soft_tissue_state_dict = torch.load(soft_tissue_args.model_path, map_location=device)
@@ -143,6 +144,10 @@ def integrate(args, soft_tissue_args, lung_args):
         hu_array = dcm.pixel_array.astype(np.float32) * slope + intercept
         return hu_array
     
+    # 노말 모델 설정
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    nmodel, _config = load_model(args.nmodel_path, device)
+    
     # 범위 설정
     mask_threshold_hu = lung_args.hu_max - 10
     raw_range = (min(soft_tissue_args.hu_min, lung_args.hu_min), max(soft_tissue_args.hu_max, lung_args.hu_max))
@@ -183,6 +188,7 @@ def integrate(args, soft_tissue_args, lung_args):
                 print(f"Warning: Mismatch in number of DICOM files for patient {patient_id}. Raw: {len(raw_dcm_list)}, Soft tissue: {len(soft_tissue_dcm_list)}, Lung: {len(lung_dcm_list)}. Proceeding with integration.")
                 continue
             
+            raw_volume = []
             merged_volume = []
 
             for idx, (raw_dcm_path, soft_tissue_dcm_path, lung_dcm_path) in enumerate(zip(raw_dcm_list, soft_tissue_dcm_list, lung_dcm_list)):
@@ -212,6 +218,7 @@ def integrate(args, soft_tissue_args, lung_args):
                     merged_pixel_array[mask] = soft_tissue_pixel_array[mask]
                     merged_pixel_array[raw_mask] = raw_pixel_array[raw_mask]
                     
+                    raw_volume.append(raw_hu_array)
                     merged_volume.append(merged_pixel_array)
                     
                 except Exception as e:
@@ -219,11 +226,14 @@ def integrate(args, soft_tissue_args, lung_args):
                     traceback.print_exc()
                     exit()
 
-            # 후처리 적용
-            merged_volume = np.array(merged_volume)
-            merged_volume = postprocess_ct_volume(merged_volume, method='gaussian3d',
-                                                    sigma_z=0.75, sigma_xy=0.5,
-                                                    enhance_sharpness=True, sharpen_amount=0.7, sharpen_radius=1.0)
+            # 후처리 적용 (기능은 구현되었지만 비활성화)
+            # raw_volume = np.array(raw_volume, dtype=np.float64)
+            # diff_volume = predict_volume(nmodel, raw_volume, device, device=='cuda')
+            # np.save(os.path.join(patient_dir, f"diff.npy"), diff_volume)
+            # merged_volume = apply_diffmap(merged_volume, diff_volume)
+            # merged_volume = postprocess_ct_volume(merged_volume, method='gaussian3d', 
+            #     sigma_z=0.8, sigma_xy=0.5,
+            #     enhance_sharpness=True, sharpen_amount=0.7, sharpen_radius=1.0)
             
             # 후처리된 슬라이스 저장
             for idx, soft_tissue_dcm_path in enumerate(soft_tissue_dcm_list):

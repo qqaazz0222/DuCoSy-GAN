@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from scipy.ndimage import gaussian_filter1d, median_filter, gaussian_filter, laplace
+from scipy.ndimage import gaussian_filter1d, median_filter, gaussian_filter
 from scipy.interpolate import interp1d
 
 def postprocess_ct_volume(volume, method='gaussian3d', enhance_sharpness=True, hu_threshold=750, **kwargs):
@@ -266,3 +266,32 @@ def kalman_filter_1d(measurements, process_variance, measurement_variance):
         filtered[k] = x_est
     
     return filtered
+
+
+def apply_diffmap(volume, diff_volume, threshold=8):
+    """
+    주어진 차이 맵을 원본 볼륨에 적용하여 수정된 볼륨을 생성합니다.
+    
+    Parameters:
+    -----------
+    volume : numpy.ndarray
+        원본 볼륨 데이터
+    diff_map : numpy.ndarray
+        차이 맵 데이터 (원본과 동일한 크기)
+    
+    Returns:
+    --------
+    modified_volume : numpy.ndarray
+        차이 맵이 적용된 수정된 볼륨
+    """
+    if type(volume) != np.ndarray:
+        volume = np.array(volume)
+    if type(diff_volume) != np.ndarray:
+        diff_volume = np.array(diff_volume)
+        
+    diff_volume[diff_volume < threshold] = 0
+    diff_volume = diff_volume.astype(np.uint8)
+    
+    modified_volume = volume + diff_volume
+
+    return modified_volume

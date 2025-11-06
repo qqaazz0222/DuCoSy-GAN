@@ -544,7 +544,7 @@ def calculate(output_dir, calculated_data_dir, task_list):
         
 
 if __name__ == "__main__":
-    print("Starting DUCOSY-GAN Anonymization Process")
+    print("Starting DUCOSY-GAN Calculation Process")
 
     # 공통 추론 인자
     args = get_common_infer_args()
