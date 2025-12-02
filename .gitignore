@@ -216,3 +216,6 @@ training_dir/*
 *.log
 debug
 *.csv
+
+# Checkpoints
+checkpoints/
