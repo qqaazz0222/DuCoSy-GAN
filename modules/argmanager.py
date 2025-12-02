@@ -10,23 +10,28 @@ def get_common_infer_args():
     parser.add_argument("--input_dir_root", type=str, default="./data/input", help="Root directory of the input datasets")
     parser.add_argument("--working_dir_root", type=str, default="./data/working", help="Root directory for saving inference results")
     parser.add_argument("--output_dir_root", type=str, default="./data/output", help="Root directory for saving merged results")
-    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kangwon_National_Univ", "Kyunghee_Univ"], help="List of dataset folder names to process")
-    # parser.add_argument("--dataset_names", type=str, nargs='+', default=["test"], help="List of dataset folder names to process")
+    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kyunghee_Univ"], help="List of dataset folder names to process")
     parser.add_argument("--ncct_folder", type=str, default="POST VUE", help="Folder name for non-contrast CT")
     parser.add_argument("--cect_folder", type=str, default="POST STD", help="Folder name for contrast-enhanced CT")
     parser.add_argument("--apply_masking", action='store_true', help="Whether to apply masking using TotalSegmentator")
     
     # 전처리 관련 인자
     parser.add_argument("--img_size", type=int, default=512, help="Size of images for model input")
-    parser.add_argument("--batch_size", type=int, default=2, help="Number of patients to process in parallel")
+    parser.add_argument("--batch_size", type=int, default=4, help="Number of patients to process in parallel")
     
     # 모델 관련 인자
     parser.add_argument("--nmodel_path", type=str, default="./checkpoints/Normal_Map_Unet.pth", help="Path to the trained Normal Map U-Net model")
 
     # 시스템 관련 인자
     parser.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use for inference")
-    parser.add_argument('--reset', action='store_true', help='Set reset flag to True')
     
+    # 성능 계산 관련 인자
+    parser.add_argument('--fast', action='store_true', help='Set fast flag to True')
+    parser.add_argument('--reset', action='store_true', help='Set reset flag to True')
+    parser.add_argument('--mask', action='store_true', help='Set mask flag to True')
+    parser.add_argument('--skip_convert', action='store_true', help='Set skip_convert flag to True')
+
+
     args = parser.parse_args()
     
     # 출력 폴더 생성

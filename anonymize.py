@@ -39,31 +39,33 @@ def raw_to_hu(raw_pixel_array, rescale_slope, rescale_intercept):
     return hu_array
     
 
-def anonymize(args, mapping_path):
+def anonymize(args, mask_flag, mapping_path):
     """DICOM 파일 익명화"""
     
     # 출력 디렉토리 생성
-    original_dir = os.path.join(args.input_dir_root)
-    generated_dir = os.path.join(args.output_dir_root)
+    if not mask_flag:
+        original_dir = os.path.join(args.input_dir_root)
+        generated_dir = os.path.join(args.output_dir_root)
+    else:
+        original_dir = os.path.join(args.output_dir_root, "masked")
+        generated_dir = os.path.join(args.output_dir_root, "masked")
+        
+    print(f"Original DICOM directory: {original_dir}")
+    print(f"Generated DICOM directory: {generated_dir}")
+        
     output_dir = os.path.join(args.output_dir_root, "anonymized")
-    output_pixel_dir = os.path.join(args.output_dir_root, "anonymized_pixel")
     
     # 기존에 존재하는 경우 삭제 후 재생성
     if os.path.exists(output_dir):
         print(f"Anonymized output directory already exists. Removing it to avoid overwriting.")
         shutil.rmtree(output_dir)
-    if os.path.exists(output_pixel_dir):
-        print(f"Anonymized pixel output directory already exists. Removing it to avoid overwriting.")
-        shutil.rmtree(output_pixel_dir)
     os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(output_pixel_dir, exist_ok=True)
 
     for category, category_dir in [("original", original_dir), ("generated", generated_dir)]:
         print(f"\nProcessing category: {category.upper()}")
         # 각 데이터셋 폴더 순회
         for dataset_name in args.dataset_names:
             data_dir = os.path.join(category_dir, dataset_name)
-            mask_dir = os.path.join(args.output_dir_root, "masked", dataset_name)
             
             # 환자 디렉토리 검색
             patient_dirs = sorted([d for d in glob.glob(os.path.join(data_dir, '*')) if os.path.isdir(d)])
@@ -73,23 +75,16 @@ def anonymize(args, mapping_path):
                 patient_id = os.path.basename(patient_dir)
                 if category == "original":
                     patient_dir = os.path.join(patient_dir, args.cect_folder)
+                if category == "generated" and mask_flag:
+                    patient_dir = os.path.join(patient_dir, "generated")
+                    
                     
                 anonymized_id = str(uuid.uuid4().hex)[:8]  # UUID로 익명화된 ID 생성
-                mask_file_path = os.path.join(mask_dir, patient_id + '.nii')
                 dcm_list = sorted(glob.glob(os.path.join(patient_dir, '*.dcm')))
                 
                 # 익명화 매핑 파일 업데이트
                 update_mapping(mapping_path, category, dataset_name, patient_id, anonymized_id)
                 
-                if args.apply_masking:
-                    if not os.path.exists(mask_file_path):
-                        print(f"  ✗ Mask file not found for patient {patient_id} in dataset {dataset_name}, skipping masking.")
-                        continue
-                    cur_mask = nib.load(mask_file_path).get_fdata()
-                    cardio_range = [51, 68]
-                    heart_mask = np.where((cur_mask >= cardio_range[0]) & (cur_mask <= cardio_range[1]))
-                    if not np.any(heart_mask):
-                        print(f"  ✗ No heart regions found in mask for patient {patient_id} in dataset {dataset_name}, skipping masking.")
                 # Pixel Data 초기화
                 pixel_data_list = []
                 
@@ -117,17 +112,6 @@ def anonymize(args, mapping_path):
                         hu_array = raw_to_hu(dcm.pixel_array, dcm.RescaleSlope, dcm.RescaleIntercept)
                         pixel_data_list.append([hu_array, z_position])
                         
-                        if args.apply_masking:
-                            hu_array[heart_mask[idx, :, :]] = -1000  # Heart 영역을 공기값으로 대체
-                            # 변경된 픽셀 데이터를 DICOM에 다시 할당
-                            dcm.PixelData = hu_array.astype(dcm.pixel_array.dtype).tobytes
-
-                        # 익명화된 DICOM 파일 저장
-                        output_patient_dir = os.path.join(output_dir, anonymized_id)
-                        os.makedirs(output_patient_dir, exist_ok=True)
-                        output_dcm_path = os.path.join(output_patient_dir, f"{idx:04d}.dcm")
-                        # dcm.save_as(output_dcm_path) # ! DICOM 저장 주석 처리
-                        
                     except Exception as e:
                         print(f"Could not process file {dcm_path}. Error: {e}")
                         import traceback
@@ -141,7 +125,7 @@ def anonymize(args, mapping_path):
                     pixel_data_list = [item[0] for item in pixel_data_list]
                     # 3D numpy 배열로 변환 후 저장
                     pixel_data_array = np.stack(pixel_data_list, axis=0)
-                    npy_output_path = os.path.join(output_pixel_dir, f"{anonymized_id}.npy")
+                    npy_output_path = os.path.join(output_dir, f"{anonymized_id}.npy")
                     np.save(npy_output_path, pixel_data_array)
             
             
@@ -149,13 +133,17 @@ if __name__ == "__main__":
     print("Starting DUCOSY-GAN Anonymization Process")
     # 공통 추론 인자
     args = get_common_infer_args()
+    mask_flag = args.mask
+    
+    if mask_flag:
+        print("Masking flag is enabled. Anonymization will be performed on masked data.")
     
     # 익명화 매핑 파일 초기화
     mapping_path = os.path.join(args.output_dir_root, "anonymization_mapping.csv")
     init_mapping(mapping_path)
 
     # 익명화 실행
-    anonymize(args, mapping_path)
+    anonymize(args, mask_flag, mapping_path)
     
     print("\nAnonymization complete.")
     print(f" - Anonymized DICOM files are saved in: {os.path.join(args.output_dir_root, 'anonymized')}")

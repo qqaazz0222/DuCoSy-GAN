@@ -11,9 +11,9 @@ from tqdm import tqdm
 
 from modules.argmanager import get_common_infer_args, get_soft_tissue_infer_args, get_lung_infer_args
 from modules.model import Generator
-from modules.nmodel.inference import load_model, predict_volume, nomalize_volume
+# from modules.nmodel.inference import load_model, predict_volume, nomalize_volume
 from modules.preprocess import preprocess_dicom, postprocess_tensor
-from modules.postprocess import postprocess_ct_volume, apply_diffmap
+# from modules.postprocess import postprocess_ct_volume, apply_diffmap
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydicom")
@@ -145,8 +145,8 @@ def integrate(args, soft_tissue_args, lung_args):
         return hu_array
     
     # 노말 모델 설정
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    nmodel, _config = load_model(args.nmodel_path, device)
+    # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # nmodel, _config = load_model(args.nmodel_path, device)
     
     # 범위 설정
     mask_threshold_hu = lung_args.hu_max - 10

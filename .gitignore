@@ -211,3 +211,8 @@ data/*
 
 # Training directory
 training_dir/*
+
+# Debug and Log files
+*.log
+debug
+*.csv

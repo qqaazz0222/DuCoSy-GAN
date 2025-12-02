@@ -107,7 +107,36 @@ CT 영상 생성을 위해 아래 명령어를 실행합니다.
 python generate.py
 ```
 
-TBU
+이 과정에서 NCCT 영상을 로드하여 아래 단계를 수행합니다.
+
+1. 각 HU Range별 영상 생성 `generate`
+    - Soft-Tissue HU Range(-150 ~ 250) 영상 생성
+    - Lung HU Range(-1000 ~ -150) 영상 생성
+2. 생성 영상을 상보적 합성 `integrate`
+    - 원본, Soft-Tissue, Lung 영상 로드
+    - `Raw Pixel Array`를 `HU Pixel Array`로 변환
+    - Soft-Tissue, Lung 영상 합성
+    - Out-Size HU Range(min ~ -1000, 250 ~ max)를 원본 영상에서 불러온 후 합성
+    - Dicom 파일 메타데이터 및 Pixel Array 수정 후 저장
+
+## Masking
+
+CT 영상에서 본 연구의 범위가 아닌 심장 및 심혈관계를 마스킹하기 위해 아래 명령어를 싱행합니다.
+
+```bash
+python masking.py
+```
+
+동시 처리 수를 `--batch_size=n`으로 수정할 수 있습니다.
+
+| `n=4`일 경우 `~22GB` 정도의 GPU 메모리를 사용합니다.
+
+| RTX 4090 기준 한 환자에 대해 마스크를 생성하기 위해 50~80s가 소요됩니다.
+
+이 과정에서 [TotalSegmentator](https://github.com/wasserth/TotalSegmentator)를 활용하여 마스킹을 생성합니다.
+
+1. 마스킹 생성 `generate`
+2. 마스킹 적용 `masking`
 
 ## Anonymize
 
@@ -116,5 +145,3 @@ TBU
 ```bash
 python anonymize.py
 ```
-
-TBU

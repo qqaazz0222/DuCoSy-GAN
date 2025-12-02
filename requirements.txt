@@ -11,6 +11,7 @@ tqdm
 numpy
 scipy
 pillow
+psutil
 opencv-python
 SimpleITK
 slicerio
