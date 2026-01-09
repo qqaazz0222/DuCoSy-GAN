@@ -13,7 +13,7 @@ from modules.argmanager import get_common_infer_args, get_soft_tissue_infer_args
 from modules.model import Generator
 # from modules.nmodel.inference import load_model, predict_volume, nomalize_volume
 from modules.preprocess import preprocess_dicom, postprocess_tensor
-# from modules.postprocess import postprocess_ct_volume, apply_diffmap
+from modules.postprocess import postprocess_ct_volume, apply_diffmap
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydicom")
@@ -231,9 +231,9 @@ def integrate(args, soft_tissue_args, lung_args):
             # diff_volume = predict_volume(nmodel, raw_volume, device, device=='cuda')
             # np.save(os.path.join(patient_dir, f"diff.npy"), diff_volume)
             # merged_volume = apply_diffmap(merged_volume, diff_volume)
-            # merged_volume = postprocess_ct_volume(merged_volume, method='gaussian3d', 
-            #     sigma_z=0.8, sigma_xy=0.5,
-            #     enhance_sharpness=True, sharpen_amount=0.7, sharpen_radius=1.0)
+            merged_volume = postprocess_ct_volume(merged_volume, method='gaussian3d', 
+                sigma_z=0.8, sigma_xy=0.5,
+                enhance_sharpness=True, sharpen_amount=0.7, sharpen_radius=1.0)
             
             # 후처리된 슬라이스 저장
             for idx, soft_tissue_dcm_path in enumerate(soft_tissue_dcm_list):

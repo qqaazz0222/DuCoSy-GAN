@@ -6,6 +6,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
+from pytorch_msssim import SSIM
 
 from modules.model import Generator, Discriminator, weights_init_normal
 from modules.preprocess import apply_windowing
@@ -16,6 +17,26 @@ import warnings
 
 # pydicom 라이브러리에서 발생하는 사용자 경고를 무시
 warnings.filterwarnings("ignore", category=UserWarning)
+
+class GradientLoss(nn.Module):
+    """
+    이미지의 경계선(Gradient) 차이를 계산하여 선명도를 높이는 Loss
+    """
+    def __init__(self):
+        super(GradientLoss, self).__init__()
+
+    def forward(self, pred, target):
+        # x축 방향 기울기 차이 (|pred_x - target_x|)
+        dy_pred = torch.abs(pred[:, :, 1:, :] - pred[:, :, :-1, :])
+        dy_target = torch.abs(target[:, :, 1:, :] - target[:, :, :-1, :])
+        loss_y = torch.mean(torch.abs(dy_pred - dy_target))
+
+        # y축 방향 기울기 차이 (|pred_y - target_y|)
+        dx_pred = torch.abs(pred[:, :, :, 1:] - pred[:, :, :, :-1])
+        dx_target = torch.abs(target[:, :, :, 1:] - target[:, :, :, :-1])
+        loss_x = torch.mean(torch.abs(dx_pred - dx_target))
+
+        return loss_x + loss_y
 
 
 def validate_and_save_images(epoch, models, val_dataloader, criteria, args, device, fixed_val_batch):
@@ -109,6 +130,8 @@ def train_cycle_gan(args, target_range):
     criterion_GAN = torch.nn.MSELoss().to(device)
     criterion_cycle = torch.nn.L1Loss().to(device)
     criterion_identity = torch.nn.L1Loss().to(device)
+    criterion_gradient = GradientLoss().to(device)
+    criterion_ssim = SSIM(data_range=1.0, size_average=True, channel=1).to(device)
     
     optimizer_G = torch.optim.Adam(list(G_A2B.parameters()) + list(G_B2A.parameters()), lr=args.lr, betas=(0.5, 0.999))
     optimizer_D_A = torch.optim.Adam(D_A.parameters(), lr=args.lr, betas=(0.5, 0.999))
@@ -208,7 +231,20 @@ def train_cycle_gan(args, target_range):
             loss_id = (criterion_identity(G_B2A(real_A), real_A) + criterion_identity(G_A2B(real_B), real_B)) / 2
             loss_GAN = (criterion_GAN(D_B(fake_B), valid) + criterion_GAN(D_A(fake_A), valid)) / 2
             loss_cycle = (criterion_cycle(G_B2A(fake_B), real_A) + criterion_cycle(G_A2B(fake_A), real_B)) / 2
-            loss_G = loss_GAN + args.lambda_cyc * loss_cycle + args.lambda_id * loss_id
+            loss_grad_cycle = (criterion_gradient(G_B2A(fake_B), real_A) + criterion_gradient(G_A2B(fake_A), real_B)) / 2
+            loss_grad_id = (criterion_gradient(G_B2A(real_A), real_A) + criterion_gradient(G_A2B(real_B), real_B)) / 2
+            loss_ssim = 1 - ((criterion_ssim(G_B2A(fake_B), real_A) + criterion_ssim(G_A2B(fake_A), real_B)) / 2)
+            
+            lambda_grad = 5.0
+            lambda_grad_id = 2.5
+            lambda_ssim = 2.0
+            
+            loss_G = loss_GAN + \
+                     args.lambda_cyc * loss_cycle + \
+                     args.lambda_id * loss_id + \
+                     lambda_grad * loss_grad_cycle + \
+                     lambda_grad_id * loss_grad_id + \
+                     lambda_ssim * loss_ssim
             loss_G.backward()
             optimizer_G.step()
 
