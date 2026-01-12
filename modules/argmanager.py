@@ -48,11 +48,11 @@ def get_soft_tissue_infer_args():
     parser = argparse.ArgumentParser(description="CycleGAN Inference for CT Scans")
     
     # 경로 관련 인자
-    parser.add_argument("--model_path", type=str, default="./checkpoints/Soft_Tissue_Generator_A2B.pth", help="Path to the trained generator model (G_A2B)")
+    parser.add_argument("--model_path", type=str, default="./checkpoints/v2/Soft_Tissue_Generator_A2B.pth", help="Path to the trained generator model (G_A2B)")
     
     # 모델 및 전처리 관련 인자
     parser.add_argument("--hu_min", type=int, default=-150, help="Minimum HU value for clipping") 
-    parser.add_argument("--hu_max", type=int, default=250, help="Maximum HU value for clipping") 
+    parser.add_argument("--hu_max", type=int, default=400, help="Maximum HU value for clipping") 
     
     args = parser.parse_args()
 
@@ -65,7 +65,7 @@ def get_lung_infer_args():
     parser = argparse.ArgumentParser(description="CycleGAN Inference for CT Scans")
     
     # 경로 관련 인자
-    parser.add_argument("--model_path", type=str, default="./checkpoints/Lung_Generator_A2B.pth", help="Path to the trained generator model (G_A2B)")
+    parser.add_argument("--model_path", type=str, default="./checkpoints/v2/Lung_Generator_A2B.pth", help="Path to the trained generator model (G_A2B)")
 
     # 모델 및 전처리 관련 인자
     parser.add_argument("--hu_min", type=int, default=-1000, help="Minimum HU value for clipping (Must match training)")
@@ -116,7 +116,7 @@ def get_soft_tissue_train_args():
     # 이미지 전처리 및 시각화 관련 인자
     parser.add_argument("--resume", type=str, default="checkpoint.pth.tar", help="Path to latest checkpoint (default: checkpoint.pth.tar in saved_models_dir)")
     parser.add_argument("--hu_min", type=int, default=-150, help="Minimum HU value for clipping")
-    parser.add_argument("--hu_max", type=int, default=250, help="Maximum HU value for clipping")
+    parser.add_argument("--hu_max", type=int, default=400, help="Maximum HU value for clipping")
     parser.add_argument("--window_width", type=int, default=400, help="Window Width for saving sample images")
     parser.add_argument("--window_center", type=int, default=40, help="Window Center for saving sample images")
     
