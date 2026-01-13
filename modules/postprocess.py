@@ -40,6 +40,10 @@ def postprocess_ct_volume(volume, method='gaussian3d', enhance_sharpness=True, h
     postprocessed_volume : numpy.ndarray
         후처리된 볼륨 데이터
     """
+    # 입력 볼륨을 numpy 배열로 변환
+    if not isinstance(volume, np.ndarray):
+        volume = np.array(volume)
+    
     original_volume = volume.copy()  # 원본 저장
     
     # HU 임계값 이상의 영역 마스크 생성 (뼈 등 고밀도 조직)
