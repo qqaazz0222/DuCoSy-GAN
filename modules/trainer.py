@@ -96,7 +96,7 @@ def train_cycle_gan(args, target_range):
     if not torch.cuda.is_available():
         print("Warning: CUDA is not available. Training on CPU.")
 
-    gpu_ids = [1, 2, 3, 4, 5, 6]
+    gpu_ids = [0, 1, 2, 3, 4, 5, 6, 7] if torch.cuda.is_available() and torch.cuda.device_count() > 1 else [0]
 
     # 출력 디렉토리 생성
     cur_training_dir = os.path.join(args.training_dir, target_range)
@@ -151,7 +151,7 @@ def train_cycle_gan(args, target_range):
         checkpoint_path = os.path.join(saved_models_dir, args.resume)
         if os.path.isfile(checkpoint_path):
             print(f"=> Loading checkpoint '{checkpoint_path}'")
-            checkpoint = torch.load(checkpoint_path, map_location=device)
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
             
             # DataParallel 래핑 여부에 관계없이 state_dict를 로드하기 위한 처리
             def load_state_dict_flexible(model, state_dict):
@@ -205,8 +205,8 @@ def train_cycle_gan(args, target_range):
     train_dataset = DicomDataset(train_dirs, args, transform=transforms_)
     val_dataset = DicomDataset(val_dirs, args, transform=transforms_)
 
-    dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size*2, shuffle=False, num_workers=args.num_workers, pin_memory=True)
+    dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True, prefetch_factor=2, persistent_workers=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size*2, shuffle=False, num_workers=args.num_workers, pin_memory=True, prefetch_factor=2, persistent_workers=True)
     
     fixed_val_batch = next(iter(val_dataloader))
     print(f"Train/Val split: {len(train_dataset)} slices / {len(val_dataset)} slices")
@@ -228,12 +228,20 @@ def train_cycle_gan(args, target_range):
             # --- 생성자(Generator) 학습 ---
             optimizer_G.zero_grad()
             fake_B, fake_A = G_A2B(real_A), G_B2A(real_B)
-            loss_id = (criterion_identity(G_B2A(real_A), real_A) + criterion_identity(G_A2B(real_B), real_B)) / 2
+
+            # Identity mapping
+            id_A, id_B = G_B2A(real_A), G_A2B(real_B)
+
+            loss_id = (criterion_identity(id_A, real_A) + criterion_identity(id_B, real_B)) / 2
             loss_GAN = (criterion_GAN(D_B(fake_B), valid) + criterion_GAN(D_A(fake_A), valid)) / 2
-            loss_cycle = (criterion_cycle(G_B2A(fake_B), real_A) + criterion_cycle(G_A2B(fake_A), real_B)) / 2
-            loss_grad_cycle = (criterion_gradient(G_B2A(fake_B), real_A) + criterion_gradient(G_A2B(fake_A), real_B)) / 2
-            loss_grad_id = (criterion_gradient(G_B2A(real_A), real_A) + criterion_gradient(G_A2B(real_B), real_B)) / 2
-            loss_ssim = 1 - ((criterion_ssim(G_B2A(fake_B), real_A) + criterion_ssim(G_A2B(fake_A), real_B)) / 2)
+            
+            # Reconstruction (Cycle consistency)
+            rec_A, rec_B = G_B2A(fake_B), G_A2B(fake_A)
+            
+            loss_cycle = (criterion_cycle(rec_A, real_A) + criterion_cycle(rec_B, real_B)) / 2
+            loss_grad_cycle = (criterion_gradient(rec_A, real_A) + criterion_gradient(rec_B, real_B)) / 2
+            loss_grad_id = (criterion_gradient(id_A, real_A) + criterion_gradient(id_B, real_B)) / 2
+            loss_ssim = 1 - ((criterion_ssim(rec_A, real_A) + criterion_ssim(rec_B, real_B)) / 2)
             
             lambda_grad = 5.0
             lambda_grad_id = 2.5
@@ -295,6 +303,10 @@ def train_cycle_gan(args, target_range):
             torch.save(model_to_save_G_B2A.state_dict(), os.path.join(saved_models_dir, f"G_B2A_best_epoch_{best_epoch}.pth"))
             print(f"✨ New best models saved for epoch {best_epoch} with validation loss: {best_val_loss:.4f}")
 
+        # 에폭별 모델 (단순 가중치) 저장
+        torch.save(model_to_save_G_A2B.state_dict(), os.path.join(saved_models_dir, f"G_A2B_epoch_{epoch+1}.pth"))
+        torch.save(model_to_save_G_B2A.state_dict(), os.path.join(saved_models_dir, f"G_B2A_epoch_{epoch+1}.pth"))
+        
         # Last 모델 (단순 가중치) 저장
         torch.save(model_to_save_G_A2B.state_dict(), os.path.join(saved_models_dir, "G_A2B_last.pth"))
         torch.save(model_to_save_G_B2A.state_dict(), os.path.join(saved_models_dir, "G_B2A_last.pth"))
@@ -313,7 +325,7 @@ def train_cycle_gan(args, target_range):
             'scheduler_D_A_state_dict': scheduler_D_A.state_dict(),
             'scheduler_D_B_state_dict': scheduler_D_B.state_dict(),
             'best_val_loss': best_val_loss,
-            'best_epoch': best_epoch, ### 추가 ###: 체크포인트에 best_epoch 정보 저장
+            'best_epoch': best_epoch,
             'args': args
         }
         torch.save(checkpoint_state, os.path.join(saved_models_dir, "checkpoint.pth.tar"))

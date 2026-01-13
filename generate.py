@@ -31,8 +31,8 @@ def generate(args, soft_tissue_args, lung_args):
     print(f"Using Checkpoint:\n  - Soft Tissue: {soft_tissue_args.model_path}\n  - Lung: {lung_args.model_path}")
     
     # 가중치 로드
-    soft_tissue_state_dict = torch.load(soft_tissue_args.model_path, map_location=device)
-    lung_state_dict = torch.load(lung_args.model_path, map_location=device)
+    soft_tissue_state_dict = torch.load(soft_tissue_args.model_path, map_location=device, weights_only=False)
+    lung_state_dict = torch.load(lung_args.model_path, map_location=device, weights_only=False)
     
     # DataParallel로 학습된 모델의 경우 'module.' 접두사 제거
     if all(key.startswith('module.') for key in soft_tissue_state_dict.keys()):
