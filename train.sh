@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # Initialize conda and activate the ducosygan environment
-source ~/anaconda3/etc/profile.d/conda.sh
-conda init
+source /opt/conda/etc/profile.d/conda.sh
 conda activate ducosygan
 # python train.py를 실행 (tmux를 활용하여 백그라운드에서 실행, 로그는 train_$(date +%Y%m%d%H%M%S).log에 저장)
 # Check if the session already exists
