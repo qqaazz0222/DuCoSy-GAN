@@ -15,7 +15,7 @@ from modules.nmodel.config import Config
 
 
 def load_model(checkpoint_path, device='cuda'):
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     # 체크포인트에 down4/up4가 있는지 확인하여 모델 클래스 결정
     state_dict = checkpoint['model_state_dict']

@@ -80,10 +80,8 @@ def get_common_train_args():
     """ 공통 훈련 인자 """
     parser = argparse.ArgumentParser(description="Common Training Arguments for CycleGAN")
     
-    parser.add_argument("--target_model", type=str, default="all", help="Target model to train: 'soft_tissue', 'lung', or 'all'")
-    
     # 학습 관련 인자
-    parser.add_argument("--epochs", type=int, default=500, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=10000, help="Number of training epochs")
     parser.add_argument("--decay_epoch", type=int, default=100, help="Epoch to start linearly decaying learning rate")
     parser.add_argument("--batch_size", type=int, default=8, help="Total batch size across all GPUs")
     parser.add_argument("--lr", type=float, default=0.0002, help="Learning rate")
