@@ -3,6 +3,9 @@
 # Initialize conda and activate the ducosygan environment
 source /opt/conda/etc/profile.d/conda.sh
 conda activate ducosygan
+
+# TARGET_MODEL=soft_tissue
+TARGET_MODEL=lung
 # python train.py를 실행 (tmux를 활용하여 백그라운드에서 실행, 로그는 train_$(date +%Y%m%d%H%M%S).log에 저장)
 # Check if the session already exists
 if tmux has-session -t ducosygan_session 2>/dev/null; then
@@ -15,5 +18,11 @@ if tmux has-session -t ducosygan_session 2>/dev/null; then
         exit 0
     fi
 fi
-tmux new-session -d -s ducosygan_session "python train.py > train_$(date +%Y%m%d%H%M%S).log 2>&1"
-echo "Training started in tmux session 'ducosygan_session'. Logs are being saved to train_$(date +%Y%m%d%H%M%S).log"
+tmux new-session -d -s ducosygan_train_${TARGET_MODEL}_session "python train.py --target_model ${TARGET_MODEL} > train_$(date +%Y%m%d%H%M%S).log 2>&1"
+echo "- Training started in tmux session 'ducosygan_train_${TARGET_MODEL}_session'. Logs are being saved to train_$(date +%Y%m%d%H%M%S).log"
+# 유용한 명령어들
+echo "- To attach to the session: tmux attach -t ducosygan_train_${TARGET_MODEL}_session"
+echo "- To list sessions: tmux ls"
+echo "- To kill the session: tmux kill-session -t ducosygan_train_${TARGET_MODEL}_session"
+# To monitor training progress, you can use the following command:
+echo "- To monitor training progress: tail -f train_$(date +%Y%m%d%H%M%S).log"
