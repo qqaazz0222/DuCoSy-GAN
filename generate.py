@@ -134,8 +134,8 @@ def generate(args, soft_tissue_args, lung_args):
     print("\nGeneration complete.")
     
 
-def integrate(args, soft_tissue_args, lung_args):
-    """Lung 및 Soft-tissue CycleGAN 모델의 결과물을 통합"""
+def synthesis(args, soft_tissue_args, lung_args):
+    """NCCT 영상을 기반으로 각 HU 범위에 해당하는 영역만 해당 모델의 결과로 덮어씌우는 상보적 합성"""
 
     def get_hu_array(dcm):
         """DICOM 객체에서 HU 배열을 추출하는 헬퍼 함수"""
@@ -148,17 +148,13 @@ def integrate(args, soft_tissue_args, lung_args):
     # device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # nmodel, _config = load_model(args.nmodel_path, device)
     
-    # 범위 설정
-    mask_threshold_hu = lung_args.hu_max - 10
-    raw_range = (min(soft_tissue_args.hu_min, lung_args.hu_min), max(soft_tissue_args.hu_max, lung_args.hu_max))
-    
     # 각 데이터셋 폴더 순회
     for dataset_name in args.dataset_names:
         working_dir = os.path.join(args.working_dir_root, dataset_name)
         output_dir = os.path.join(args.output_dir_root, dataset_name)
         os.makedirs(output_dir, exist_ok=True)
         
-        print(f"\nIntegrating dataset: {dataset_name}")
+        print(f"\nSynthesizing dataset: {dataset_name}")
 
         # 환자 디렉토리 검색
         patient_dirs = sorted([d for d in glob.glob(os.path.join(working_dir, '*')) if os.path.isdir(d)])
@@ -182,7 +178,7 @@ def integrate(args, soft_tissue_args, lung_args):
                 continue
             lung_dcm_list = sorted(glob.glob(os.path.join(lung_base_path, "*.dcm")))
             if not lung_dcm_list:
-                print(f"No lung DICOM files found for patient {patient_id}. Skipping integration.")
+                print(f"No lung DICOM files found for patient {patient_id}. Skipping synthesis.")
                 continue
             if len(raw_dcm_list) != len(soft_tissue_dcm_list) != len(lung_dcm_list):
                 print(f"Warning: Mismatch in number of DICOM files for patient {patient_id}. Raw: {len(raw_dcm_list)}, Soft tissue: {len(soft_tissue_dcm_list)}, Lung: {len(lung_dcm_list)}. Proceeding with integration.")
@@ -206,17 +202,28 @@ def integrate(args, soft_tissue_args, lung_args):
                     raw_pixel_array = raw_dcm.pixel_array
                     soft_tissue_pixel_array = soft_tissue_dcm.pixel_array
                     lung_pixel_array = lung_dcm.pixel_array
-                    merged_pixel_array = lung_pixel_array.copy()
+                    
+                    # NCCT 영상을 기본으로 시작
+                    merged_pixel_array = raw_pixel_array.copy()
                     
                     # HU 배열 계산 및 마스크 생성
                     raw_hu_array = get_hu_array(raw_dcm)
-                    raw_mask = np.logical_or(raw_hu_array > raw_range[1], raw_hu_array < raw_range[0])
-                    lung_hu_array = get_hu_array(lung_dcm)
-                    mask = lung_hu_array > mask_threshold_hu 
                     
-                    # 마스크를 사용하여 픽셀 교체
-                    merged_pixel_array[mask] = soft_tissue_pixel_array[mask]
-                    merged_pixel_array[raw_mask] = raw_pixel_array[raw_mask]
+                    # Soft tissue HU 범위 마스크 (soft_tissue_args.hu_min ~ soft_tissue_args.hu_max)
+                    soft_tissue_mask = np.logical_and(
+                        raw_hu_array >= soft_tissue_args.hu_min,
+                        raw_hu_array <= soft_tissue_args.hu_max
+                    )
+                    
+                    # Lung HU 범위 마스크 (lung_args.hu_min ~ lung_args.hu_max) 
+                    lung_mask = np.logical_and(
+                        raw_hu_array >= lung_args.hu_min,
+                        raw_hu_array <= lung_args.hu_max
+                    )
+                    
+                    # NCCT 영상 위에 각 HU 범위에 해당하는 영역만 모델 결과로 덮어씌우기
+                    merged_pixel_array[soft_tissue_mask] = soft_tissue_pixel_array[soft_tissue_mask]
+                    merged_pixel_array[lung_mask] = lung_pixel_array[lung_mask]
                     
                     raw_volume.append(raw_hu_array)
                     merged_volume.append(merged_pixel_array)
@@ -231,9 +238,18 @@ def integrate(args, soft_tissue_args, lung_args):
             # diff_volume = predict_volume(nmodel, raw_volume, device, device=='cuda')
             # np.save(os.path.join(patient_dir, f"diff.npy"), diff_volume)
             # merged_volume = apply_diffmap(merged_volume, diff_volume)
+            
+            # z축 방향 연결성 개선을 위한 전처리 스무딩
+            merged_volume = np.array(merged_volume, dtype=np.float32)
+            
+            # 1단계: z축 방향으로 가우시안 스무딩 적용 (슬라이스 간 급격한 변화 완화)
+            from scipy.ndimage import gaussian_filter1d
+            merged_volume = gaussian_filter1d(merged_volume, sigma=1.2, axis=0)
+            
+            # 2단계: 3D 가우시안 필터로 전체적인 스무딩 및 선명도 향상
             merged_volume = postprocess_ct_volume(merged_volume, method='gaussian3d', 
-                sigma_z=0.8, sigma_xy=0.5,
-                enhance_sharpness=True, sharpen_amount=0.7, sharpen_radius=1.0)
+                sigma_z=1.5, sigma_xy=0.3,
+                enhance_sharpness=True, sharpen_amount=0.9, sharpen_radius=1.2)
             
             # 후처리된 슬라이스 저장
             for idx, soft_tissue_dcm_path in enumerate(soft_tissue_dcm_list):
@@ -243,6 +259,8 @@ def integrate(args, soft_tissue_args, lung_args):
 
                     # 최종 DICOM 객체 생성 및 저장
                     output_dcm = soft_tissue_dcm.copy()
+                    output_dcm.window_center = args.window_center
+                    output_dcm.window_width = args.window_width
                     output_dcm.PixelData = merged_pixel_array.tobytes()
                     
                     # VR 에러 해결 및 메타데이터 업데이트
@@ -257,7 +275,7 @@ def integrate(args, soft_tissue_args, lung_args):
                     full_range_center = -1000 + (full_range_width / 2)
                     output_dcm.WindowWidth = full_range_width
                     output_dcm.WindowCenter = full_range_center
-                    output_dcm.SeriesDescription = "sCECT (Full Range Integrated) v4"
+                    output_dcm.SeriesDescription = "DuCoSyGAN sCECT v2"
                     
                     output_dcm_path = os.path.join(output_base_path, f"{idx:04d}.dcm")
                     output_dcm.save_as(output_dcm_path)
@@ -267,21 +285,21 @@ def integrate(args, soft_tissue_args, lung_args):
                     traceback.print_exc()
                     exit()
                     
-    print("\nIntegration complete.")
+    print("\nSynthesis complete.")
 
 
 if __name__ == "__main__":
-    print("Starting DUCOSY-GAN Inference and Integration Process")
+    print("Starting DUCOSY-GAN Inference and Synthesis Process")
     # 인자 설정
     args = get_common_infer_args() # 공통 추론 인자
     soft_tissue_args = get_soft_tissue_infer_args() # Soft-tissue CycleGAN 추론 인자
     lung_args = get_lung_infer_args() # Lung CycleGAN 추론 인자
     
     # 생성 실행
-    generate(args, soft_tissue_args, lung_args)
+    # generate(args, soft_tissue_args, lung_args)
     
-    # 통합 실행
-    integrate(args, soft_tissue_args, lung_args)
+    # 합성 실행
+    synthesis(args, soft_tissue_args, lung_args)
 
     print("\nAll processing complete!")
-    print(f" - Final integrated DICOM files are saved in: {args.output_dir_root}")
+    print(f" - Final synthesized DICOM files are saved in: {args.output_dir_root}")

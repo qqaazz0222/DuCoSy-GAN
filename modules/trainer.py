@@ -3,6 +3,7 @@ import glob
 import random
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
@@ -37,6 +38,150 @@ class GradientLoss(nn.Module):
         loss_x = torch.mean(torch.abs(dx_pred - dx_target))
 
         return loss_x + loss_y
+
+
+class ContrastAttentionLoss(nn.Module):
+    """
+    조영/비조영 이미지 간 차이가 큰 영역에 가중치를 부여하는 Attention Loss.
+    
+    [중요] 시간차 촬영 데이터 대응:
+    - 듀얼 에너지 CT가 아닌 시간차 촬영 데이터는 해부학적 불일치(misalignment)가 있음
+    - 픽셀 단위 비교 대신 패치/영역 단위 통계 기반 비교 사용
+    - 가우시안 블러로 작은 위치 오차에 대한 내성 확보
+    """
+    def __init__(self, sigma=0.1, min_weight=1.0, max_weight=3.0, blur_kernel=5):
+        super(ContrastAttentionLoss, self).__init__()
+        self.sigma = sigma
+        self.min_weight = min_weight
+        self.max_weight = max_weight
+        self.blur_kernel = blur_kernel
+        
+        # 가우시안 블러를 위한 커널 생성 (작은 misalignment 허용)
+        self.blur = nn.AvgPool2d(kernel_size=blur_kernel, stride=1, padding=blur_kernel//2)
+
+    def forward(self, pred, target, source):
+        """
+        Args:
+            pred: 생성된 이미지 (fake_B, NCCT -> CECT)
+            target: 실제 조영 이미지 (real_B, CECT)
+            source: 실제 비조영 이미지 (real_A, NCCT)
+        """
+        # 블러 적용으로 작은 위치 오차에 강건하게 만듦
+        target_blurred = self.blur(target)
+        source_blurred = self.blur(source)
+        
+        # 조영/비조영 간 차이 계산 (블러된 이미지 사용)
+        contrast_diff = torch.abs(target_blurred - source_blurred)
+        
+        # 차이를 기반으로 가중치 맵 생성 (차이가 클수록 높은 가중치)
+        # 단, max_weight를 낮춰서 misalignment 영향 완화
+        attention_weight = self.min_weight + (self.max_weight - self.min_weight) * (
+            1 - torch.exp(-contrast_diff / self.sigma)
+        )
+        
+        # 가중치가 적용된 L1 손실 (블러된 예측과 타겟 비교)
+        pred_blurred = self.blur(pred)
+        weighted_loss = torch.mean(attention_weight * torch.abs(pred_blurred - target_blurred))
+        
+        return weighted_loss
+
+
+class ContrastRegionLoss(nn.Module):
+    """
+    조영제로 인해 HU 값이 높아진 영역(혈관, 조영 증강 부위)을 
+    더 정확하게 재현하도록 하는 손실 함수.
+    
+    [중요] 시간차 촬영 데이터 대응:
+    - 픽셀 단위 마스크 대신 전체 이미지의 밝기 분포(히스토그램) 유사성 사용
+    - 조영 영역의 평균 밝기와 분포를 맞추는 방식으로 변경
+    """
+    def __init__(self, threshold=0.3, weight=2.0):
+        super(ContrastRegionLoss, self).__init__()
+        self.threshold = threshold
+        self.weight = weight
+        self.pool = nn.AvgPool2d(kernel_size=8, stride=8)  # 패치 단위 비교
+
+    def forward(self, pred, target, source):
+        """
+        Args:
+            pred: 생성된 이미지 (fake_B)
+            target: 실제 조영 이미지 (real_B)
+            source: 실제 비조영 이미지 (real_A)
+        """
+        # 패치 단위로 다운샘플링하여 위치 오차에 강건하게
+        pred_patches = self.pool(pred)
+        target_patches = self.pool(target)
+        source_patches = self.pool(source)
+        
+        # 조영으로 인해 밝아진 영역 마스크 생성 (패치 단위)
+        contrast_enhancement = target_patches - source_patches
+        
+        # 조영 증강 영역 마스크 (부드러운 마스크)
+        enhancement_mask = torch.sigmoid(5 * (contrast_enhancement - self.threshold))
+        
+        # 조영 영역에서의 손실
+        region_loss = torch.mean(enhancement_mask * torch.abs(pred_patches - target_patches))
+        
+        # 추가: 전체 이미지의 밝기 분포 유사성 (히스토그램 매칭 효과)
+        pred_mean, pred_std = pred.mean(), pred.std()
+        target_mean, target_std = target.mean(), target.std()
+        distribution_loss = torch.abs(pred_mean - target_mean) + torch.abs(pred_std - target_std)
+        
+        return self.weight * (region_loss + 0.5 * distribution_loss)
+
+
+class ContrastEdgeLoss(nn.Module):
+    """
+    조영 경계선을 더 선명하게 학습하도록 하는 손실 함수.
+    
+    [중요] 시간차 촬영 데이터 대응:
+    - 위치가 정확히 일치하지 않으므로, 특정 위치의 경계가 아닌
+    - 전체 이미지의 경계 강도 분포를 비교하는 방식으로 변경
+    - 생성 이미지가 타겟과 유사한 수준의 경계 선명도를 갖도록 유도
+    """
+    def __init__(self):
+        super(ContrastEdgeLoss, self).__init__()
+        # Sobel 필터 정의 (경계 검출용)
+        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+        sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+        self.register_buffer('sobel_x', sobel_x)
+        self.register_buffer('sobel_y', sobel_y)
+
+    def get_edges(self, img):
+        """이미지의 경계 추출"""
+        edge_x = F.conv2d(img, self.sobel_x, padding=1)
+        edge_y = F.conv2d(img, self.sobel_y, padding=1)
+        edges = torch.sqrt(edge_x ** 2 + edge_y ** 2 + 1e-6)
+        return edges
+
+    def forward(self, pred, target, source):
+        """
+        Args:
+            pred: 생성된 이미지 (fake_B)
+            target: 실제 조영 이미지 (real_B)
+            source: 실제 비조영 이미지 (real_A) - 참고용
+        """
+        # 예측/타겟 이미지의 경계 추출
+        pred_edges = self.get_edges(pred)
+        target_edges = self.get_edges(target)
+        
+        # [수정] 위치 기반 비교 대신 경계 강도 통계 비교
+        # 1. 경계 강도의 평균과 표준편차 비교 (전체적인 선명도 수준)
+        pred_edge_mean, pred_edge_std = pred_edges.mean(), pred_edges.std()
+        target_edge_mean, target_edge_std = target_edges.mean(), target_edges.std()
+        
+        stats_loss = torch.abs(pred_edge_mean - target_edge_mean) + \
+                     torch.abs(pred_edge_std - target_edge_std)
+        
+        # 2. 경계 강도 히스토그램 유사성 (분포 비교)
+        # 상위 k% 경계 강도의 평균 비교 (강한 경계 영역)
+        k = 0.1  # 상위 10%
+        pred_topk = torch.topk(pred_edges.flatten(), int(pred_edges.numel() * k)).values.mean()
+        target_topk = torch.topk(target_edges.flatten(), int(target_edges.numel() * k)).values.mean()
+        
+        topk_loss = torch.abs(pred_topk - target_topk)
+        
+        return stats_loss + topk_loss
 
 
 def validate_and_save_images(epoch, models, val_dataloader, criteria, args, device, fixed_val_batch):
@@ -96,7 +241,7 @@ def train_cycle_gan(args, target_range):
     if not torch.cuda.is_available():
         print("Warning: CUDA is not available. Training on CPU.")
 
-    gpu_ids = [1, 2, 3, 4, 5, 6]
+    gpu_ids = [0, 1, 2, 3, 4, 5, 6, 7] if torch.cuda.is_available() and torch.cuda.device_count() > 1 else [0]
 
     # 출력 디렉토리 생성
     cur_training_dir = os.path.join(args.training_dir, target_range)
@@ -133,6 +278,13 @@ def train_cycle_gan(args, target_range):
     criterion_gradient = GradientLoss().to(device)
     criterion_ssim = SSIM(data_range=1.0, size_average=True, channel=1).to(device)
     
+    # 조영 효과 집중 학습을 위한 추가 손실 함수들
+    # [참고] 시간차 촬영 데이터(듀얼 에너지 CT 아님)에 맞게 설계됨
+    # - 픽셀 단위 비교 대신 패치/통계 기반 비교로 misalignment에 강건함
+    criterion_contrast_attention = ContrastAttentionLoss(sigma=0.15, min_weight=1.0, max_weight=3.0, blur_kernel=7).to(device)
+    criterion_contrast_region = ContrastRegionLoss(threshold=0.15, weight=1.5).to(device)
+    criterion_contrast_edge = ContrastEdgeLoss().to(device)
+    
     optimizer_G = torch.optim.Adam(list(G_A2B.parameters()) + list(G_B2A.parameters()), lr=args.lr, betas=(0.5, 0.999))
     optimizer_D_A = torch.optim.Adam(D_A.parameters(), lr=args.lr, betas=(0.5, 0.999))
     optimizer_D_B = torch.optim.Adam(D_B.parameters(), lr=args.lr, betas=(0.5, 0.999))
@@ -151,7 +303,7 @@ def train_cycle_gan(args, target_range):
         checkpoint_path = os.path.join(saved_models_dir, args.resume)
         if os.path.isfile(checkpoint_path):
             print(f"=> Loading checkpoint '{checkpoint_path}'")
-            checkpoint = torch.load(checkpoint_path, map_location=device)
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
             
             # DataParallel 래핑 여부에 관계없이 state_dict를 로드하기 위한 처리
             def load_state_dict_flexible(model, state_dict):
@@ -205,8 +357,8 @@ def train_cycle_gan(args, target_range):
     train_dataset = DicomDataset(train_dirs, args, transform=transforms_)
     val_dataset = DicomDataset(val_dirs, args, transform=transforms_)
 
-    dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size*2, shuffle=False, num_workers=args.num_workers, pin_memory=True)
+    dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True, prefetch_factor=2, persistent_workers=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size*2, shuffle=False, num_workers=args.num_workers, pin_memory=True, prefetch_factor=2, persistent_workers=True)
     
     fixed_val_batch = next(iter(val_dataloader))
     print(f"Train/Val split: {len(train_dataset)} slices / {len(val_dataset)} slices")
@@ -228,23 +380,47 @@ def train_cycle_gan(args, target_range):
             # --- 생성자(Generator) 학습 ---
             optimizer_G.zero_grad()
             fake_B, fake_A = G_A2B(real_A), G_B2A(real_B)
-            loss_id = (criterion_identity(G_B2A(real_A), real_A) + criterion_identity(G_A2B(real_B), real_B)) / 2
+
+            # Identity mapping
+            id_A, id_B = G_B2A(real_A), G_A2B(real_B)
+
+            loss_id = (criterion_identity(id_A, real_A) + criterion_identity(id_B, real_B)) / 2
             loss_GAN = (criterion_GAN(D_B(fake_B), valid) + criterion_GAN(D_A(fake_A), valid)) / 2
-            loss_cycle = (criterion_cycle(G_B2A(fake_B), real_A) + criterion_cycle(G_A2B(fake_A), real_B)) / 2
-            loss_grad_cycle = (criterion_gradient(G_B2A(fake_B), real_A) + criterion_gradient(G_A2B(fake_A), real_B)) / 2
-            loss_grad_id = (criterion_gradient(G_B2A(real_A), real_A) + criterion_gradient(G_A2B(real_B), real_B)) / 2
-            loss_ssim = 1 - ((criterion_ssim(G_B2A(fake_B), real_A) + criterion_ssim(G_A2B(fake_A), real_B)) / 2)
+            
+            # Reconstruction (Cycle consistency)
+            rec_A, rec_B = G_B2A(fake_B), G_A2B(fake_A)
+            
+            loss_cycle = (criterion_cycle(rec_A, real_A) + criterion_cycle(rec_B, real_B)) / 2
+            loss_grad_cycle = (criterion_gradient(rec_A, real_A) + criterion_gradient(rec_B, real_B)) / 2
+            loss_grad_id = (criterion_gradient(id_A, real_A) + criterion_gradient(id_B, real_B)) / 2
+            loss_ssim = 1 - ((criterion_ssim(rec_A, real_A) + criterion_ssim(rec_B, real_B)) / 2)
+            
+            # 조영 효과 집중 학습 손실 (NCCT -> CECT 방향에 집중)
+            # fake_B는 NCCT에서 생성한 가상 CECT, real_B는 실제 CECT, real_A는 NCCT
+            loss_contrast_attention = criterion_contrast_attention(fake_B, real_B, real_A)
+            loss_contrast_region = criterion_contrast_region(fake_B, real_B, real_A)
+            loss_contrast_edge = criterion_contrast_edge(fake_B, real_B, real_A)
             
             lambda_grad = 5.0
             lambda_grad_id = 2.5
             lambda_ssim = 2.0
+            
+            # 조영 효과 손실 가중치 (시간차 촬영 데이터에 맞게 조정)
+            # - 픽셀 정렬이 완벽하지 않으므로 가중치를 낮춤
+            # - 통계 기반 비교이므로 안정적인 학습 가능
+            lambda_contrast_attention = 2.0  # 조영 차이 영역 집중 (블러 적용)
+            lambda_contrast_region = 1.5     # 조영 증강 영역 재현 (패치 기반)
+            lambda_contrast_edge = 1.0       # 경계 선명도 (통계 기반)
             
             loss_G = loss_GAN + \
                      args.lambda_cyc * loss_cycle + \
                      args.lambda_id * loss_id + \
                      lambda_grad * loss_grad_cycle + \
                      lambda_grad_id * loss_grad_id + \
-                     lambda_ssim * loss_ssim
+                     lambda_ssim * loss_ssim + \
+                     lambda_contrast_attention * loss_contrast_attention + \
+                     lambda_contrast_region * loss_contrast_region + \
+                     lambda_contrast_edge * loss_contrast_edge
             loss_G.backward()
             optimizer_G.step()
 
@@ -259,7 +435,11 @@ def train_cycle_gan(args, target_range):
             loss_D_B.backward()
             optimizer_D_B.step()
             
-            pbar.set_postfix({"G_loss": f"{loss_G.item():.4f}", "D_loss": f"{(loss_D_A + loss_D_B).item():.4f}"})
+            pbar.set_postfix({
+                "G_loss": f"{loss_G.item():.4f}", 
+                "D_loss": f"{(loss_D_A + loss_D_B).item():.4f}",
+                "contrast": f"{(loss_contrast_attention + loss_contrast_region + loss_contrast_edge).item():.4f}"
+            })
 
         # 스케줄러 업데이트
         scheduler_G.step()
@@ -295,6 +475,10 @@ def train_cycle_gan(args, target_range):
             torch.save(model_to_save_G_B2A.state_dict(), os.path.join(saved_models_dir, f"G_B2A_best_epoch_{best_epoch}.pth"))
             print(f"✨ New best models saved for epoch {best_epoch} with validation loss: {best_val_loss:.4f}")
 
+        # 에폭별 모델 (단순 가중치) 저장
+        torch.save(model_to_save_G_A2B.state_dict(), os.path.join(saved_models_dir, f"G_A2B_epoch_{epoch+1}.pth"))
+        torch.save(model_to_save_G_B2A.state_dict(), os.path.join(saved_models_dir, f"G_B2A_epoch_{epoch+1}.pth"))
+        
         # Last 모델 (단순 가중치) 저장
         torch.save(model_to_save_G_A2B.state_dict(), os.path.join(saved_models_dir, "G_A2B_last.pth"))
         torch.save(model_to_save_G_B2A.state_dict(), os.path.join(saved_models_dir, "G_B2A_last.pth"))
@@ -313,7 +497,7 @@ def train_cycle_gan(args, target_range):
             'scheduler_D_A_state_dict': scheduler_D_A.state_dict(),
             'scheduler_D_B_state_dict': scheduler_D_B.state_dict(),
             'best_val_loss': best_val_loss,
-            'best_epoch': best_epoch, ### 추가 ###: 체크포인트에 best_epoch 정보 저장
+            'best_epoch': best_epoch,
             'args': args
         }
         torch.save(checkpoint_state, os.path.join(saved_models_dir, "checkpoint.pth.tar"))
