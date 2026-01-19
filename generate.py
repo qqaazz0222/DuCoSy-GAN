@@ -198,6 +198,17 @@ def synthesis(args, soft_tissue_args, lung_args):
                     soft_tissue_dcm = pydicom.dcmread(soft_tissue_dcm_path)
                     lung_dcm = pydicom.dcmread(lung_dcm_path)
                     
+                    # 픽셀 데이터 존재 여부 확인
+                    if not hasattr(raw_dcm, 'PixelData') or raw_dcm.PixelData is None:
+                        print(f"Warning: No pixel data in raw DICOM file {raw_dcm_path}. Skipping.")
+                        continue
+                    if not hasattr(soft_tissue_dcm, 'PixelData') or soft_tissue_dcm.PixelData is None:
+                        print(f"Warning: No pixel data in soft tissue DICOM file {soft_tissue_dcm_path}. Skipping.")
+                        continue
+                    if not hasattr(lung_dcm, 'PixelData') or lung_dcm.PixelData is None:
+                        print(f"Warning: No pixel data in lung DICOM file {lung_dcm_path}. Skipping.")
+                        continue
+                    
                     # 이미지 로드
                     raw_pixel_array = raw_dcm.pixel_array
                     soft_tissue_pixel_array = soft_tissue_dcm.pixel_array
@@ -248,8 +259,8 @@ def synthesis(args, soft_tissue_args, lung_args):
             
             # 2단계: 3D 가우시안 필터로 전체적인 스무딩 및 선명도 향상
             merged_volume = postprocess_ct_volume(merged_volume, method='gaussian3d', 
-                sigma_z=1.5, sigma_xy=0.3,
-                enhance_sharpness=True, sharpen_amount=0.9, sharpen_radius=1.2)
+                sigma_z=1.1, sigma_xy=0.1,
+                enhance_sharpness=True, sharpen_amount=1.3, sharpen_radius=1.0,)
             
             # 후처리된 슬라이스 저장
             for idx, soft_tissue_dcm_path in enumerate(soft_tissue_dcm_list):
@@ -296,7 +307,7 @@ if __name__ == "__main__":
     lung_args = get_lung_infer_args() # Lung CycleGAN 추론 인자
     
     # 생성 실행
-    # generate(args, soft_tissue_args, lung_args)
+    generate(args, soft_tissue_args, lung_args)
     
     # 합성 실행
     synthesis(args, soft_tissue_args, lung_args)

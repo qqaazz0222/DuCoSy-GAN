@@ -10,7 +10,7 @@ def get_common_infer_args():
     parser.add_argument("--input_dir_root", type=str, default="./data/input", help="Root directory of the input datasets")
     parser.add_argument("--working_dir_root", type=str, default="./data/working", help="Root directory for saving inference results")
     parser.add_argument("--output_dir_root", type=str, default="./data/output", help="Root directory for saving merged results")
-    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kangwon_National_Univ"], help="List of dataset folder names to process")
+    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kyunghee_Univ"], help="List of dataset folder names to process")
     parser.add_argument("--ncct_folder", type=str, default="POST VUE", help="Folder name for non-contrast CT")
     parser.add_argument("--cect_folder", type=str, default="POST STD", help="Folder name for contrast-enhanced CT")
     parser.add_argument("--apply_masking", action='store_true', help="Whether to apply masking using TotalSegmentator")
@@ -21,6 +21,10 @@ def get_common_infer_args():
     
     # 모델 관련 인자
     parser.add_argument("--nmodel_path", type=str, default="./checkpoints/Normal_Map_Unet.pth", help="Path to the trained Normal Map U-Net model")
+    
+    # 저장 관련 인자
+    parser.add_argument("--window_center", type=int, default=40, help="Window center for HU to intensity conversion")
+    parser.add_argument("--window_width", type=int, default=400, help="Window width for HU to intensity conversion")
 
     # 시스템 관련 인자
     parser.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use for inference")
@@ -48,7 +52,7 @@ def get_soft_tissue_infer_args():
     parser = argparse.ArgumentParser(description="CycleGAN Inference for CT Scans")
     
     # 경로 관련 인자
-    parser.add_argument("--model_path", type=str, default="./checkpoints/v2/Soft_Tissue_Generator_A2B.pth", help="Path to the trained generator model (G_A2B)")
+    parser.add_argument("--model_path", type=str, default="./checkpoints/v3/Soft_Tissue_Generator_A2B.pth", help="Path to the trained generator model (G_A2B)")
     
     # 모델 및 전처리 관련 인자
     parser.add_argument("--hu_min", type=int, default=-150, help="Minimum HU value for clipping") 
@@ -65,7 +69,7 @@ def get_lung_infer_args():
     parser = argparse.ArgumentParser(description="CycleGAN Inference for CT Scans")
     
     # 경로 관련 인자
-    parser.add_argument("--model_path", type=str, default="./checkpoints/v2/Lung_Generator_A2B.pth", help="Path to the trained generator model (G_A2B)")
+    parser.add_argument("--model_path", type=str, default="./checkpoints/v3/Lung_Generator_A2B.pth", help="Path to the trained generator model (G_A2B)")
 
     # 모델 및 전처리 관련 인자
     parser.add_argument("--hu_min", type=int, default=-1000, help="Minimum HU value for clipping (Must match training)")
