@@ -121,7 +121,13 @@ def get_soft_tissue_train_args():
         hu_min=-150,
         hu_max=250,
         window_width=400,
-        window_center=40
+        window_center=40,
+        use_soft_squeezing=True,
+        use_cbam=True,
+        use_masks=True,
+        auto_generate_masks=True,  # DICOM에서 자동으로 마스크 생성
+        mask_types=['bone', 'mediastinum'],  # 생성할 마스크 종류
+        mask_folders=['bone_mask', 'mediastinum_mask']  # 파일에서 로드할 때 사용 (auto_generate_masks=False일 때)
     )
     return args
 
@@ -132,6 +138,12 @@ def get_lung_train_args():
         hu_min=-1000,
         hu_max=-150,
         window_width=1500,
-        window_center=-600
+        window_center=-600,
+        use_soft_squeezing=True,
+        use_cbam=True,
+        use_masks=True,
+        auto_generate_masks=True,  # DICOM에서 자동으로 마스크 생성
+        mask_types=['lung'],  # 생성할 마스크 종류
+        mask_folders=['lung_mask']  # 파일에서 로드할 때 사용 (auto_generate_masks=False일 때)
     )
     return args

@@ -198,11 +198,21 @@ def validate_and_save_images(epoch, models, val_dataloader, criteria, args, devi
     with torch.no_grad():
         for i, batch in enumerate(val_dataloader):
             real_A, real_B = batch["A"].to(device), batch["B"].to(device)
+            
+            # 마스크가 있으면 입력에 결합
+            if "masks" in batch:
+                masks = batch["masks"].to(device)
+                real_A_input = torch.cat([real_A, masks], dim=1)
+                real_B_input = torch.cat([real_B, masks], dim=1)
+            else:
+                real_A_input = real_A
+                real_B_input = real_B
+            
             valid = torch.ones((real_A.size(0), 1, args.img_size // 16, args.img_size // 16), requires_grad=False).to(device)
 
-            fake_B, fake_A = G_A2B(real_A), G_B2A(real_B)
+            fake_B, fake_A = G_A2B(real_A_input), G_B2A(real_B_input)
             
-            loss_id = (criterion_identity(G_B2A(real_A), real_A) + criterion_identity(G_A2B(real_B), real_B)) / 2
+            loss_id = (criterion_identity(G_B2A(real_A_input), real_A) + criterion_identity(G_A2B(real_B_input), real_B)) / 2
             loss_GAN = (criterion_GAN(D_B(fake_B), valid) + criterion_GAN(D_A(fake_A), valid)) / 2
             loss_cycle = (criterion_cycle(G_B2A(fake_B), real_A) + criterion_cycle(G_A2B(fake_A), real_B)) / 2
             
@@ -215,7 +225,15 @@ def validate_and_save_images(epoch, models, val_dataloader, criteria, args, devi
     with torch.no_grad():
         real_A = fixed_val_batch["A"].to(device)
         real_B = fixed_val_batch["B"].to(device)
-        fake_B = G_A2B(real_A)
+        
+        # 마스크가 있으면 입력에 결합
+        if "masks" in fixed_val_batch:
+            masks = fixed_val_batch["masks"].to(device)
+            real_A_input = torch.cat([real_A, masks], dim=1)
+        else:
+            real_A_input = real_A
+        
+        fake_B = G_A2B(real_A_input)
 
         real_A_win = apply_windowing(real_A, args)
         real_B_win = apply_windowing(real_B, args)
@@ -254,7 +272,16 @@ def train_cycle_gan(args, target_range):
     print(f"Starting training with args: {args}")
 
     # 모델 초기화
-    G_A2B, G_B2A = Generator(), Generator()
+    input_channels = 1  # 기본값
+    if getattr(args, 'use_masks', False) and getattr(args, 'mask_folders', []):
+        # 원본 이미지 1채널 + 마스크 채널 수
+        input_channels = 1 + len(args.mask_folders)
+        print(f"Using {len(args.mask_folders)} mask(s): {args.mask_folders}")
+        print(f"Total input channels: {input_channels}")
+    
+    use_cbam = getattr(args, 'use_cbam', True)
+    G_A2B = Generator(input_channels=input_channels, use_cbam=use_cbam)
+    G_B2A = Generator(input_channels=input_channels, use_cbam=use_cbam)
     D_A, D_B = Discriminator(), Discriminator()
     
     # DataParallel로 모델 감싸기
@@ -374,15 +401,25 @@ def train_cycle_gan(args, target_range):
 
         for i, batch in enumerate(pbar):
             real_A, real_B = batch["A"].to(device), batch["B"].to(device)
+            
+            # 마스크가 있으면 입력에 결합
+            if "masks" in batch:
+                masks = batch["masks"].to(device)
+                real_A_input = torch.cat([real_A, masks], dim=1)
+                real_B_input = torch.cat([real_B, masks], dim=1)
+            else:
+                real_A_input = real_A
+                real_B_input = real_B
+            
             valid = torch.ones((real_A.size(0), 1, args.img_size // 16, args.img_size // 16), requires_grad=False).to(device)
             fake = torch.zeros((real_A.size(0), 1, args.img_size // 16, args.img_size // 16), requires_grad=False).to(device)
 
             # --- 생성자(Generator) 학습 ---
             optimizer_G.zero_grad()
-            fake_B, fake_A = G_A2B(real_A), G_B2A(real_B)
+            fake_B, fake_A = G_A2B(real_A_input), G_B2A(real_B_input)
 
             # Identity mapping
-            id_A, id_B = G_B2A(real_A), G_A2B(real_B)
+            id_A, id_B = G_B2A(real_A_input), G_A2B(real_B_input)
 
             loss_id = (criterion_identity(id_A, real_A) + criterion_identity(id_B, real_B)) / 2
             loss_GAN = (criterion_GAN(D_B(fake_B), valid) + criterion_GAN(D_A(fake_A), valid)) / 2

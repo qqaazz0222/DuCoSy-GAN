@@ -3,12 +3,55 @@ import torch
 import pydicom
 
 # ---- DICOM 이미지 전처리 ----
-def apply_hu_transform(dicom_img, hu_min, hu_max):
+def apply_soft_squeezing(image, hu_min, hu_max, sigma=50):
+    """
+    Soft Squeezing: 비선형 매핑으로 상한값 근처의 미세한 차이 보존
+    
+    Args:
+        image: HU 값 이미지
+        hu_min: 최소 HU 값
+        hu_max: 최대 HU 값 (이 값 근처의 데이터를 부드럽게 압축)
+        sigma: Sigmoid의 기울기 조절 (작을수록 더 부드러운 압축)
+    
+    Returns:
+        [-1, 1] 범위로 정규화된 이미지 (상한값 근처 정보 보존)
+    """
+    # 기본 선형 정규화
+    normalized = (image - hu_min) / (hu_max - hu_min)
+    
+    # 상한값 근처(1.0 이상)에 Sigmoid 적용하여 부드럽게 압축
+    # 예: 250 HU 이상의 뼈와 250 HU 근처의 혈관을 구분 가능하게 유지
+    threshold = 0.9  # 정규화 값 0.9 이상부터 soft squeezing 적용
+    
+    # Sigmoid 함수로 부드럽게 압축: 1 / (1 + exp(-k*(x-threshold)))
+    k = 10.0 / sigma  # 기울기 조절
+    soft_mask = 1.0 / (1.0 + np.exp(-k * (normalized - threshold)))
+    
+    # 0.9 이하는 선형 유지, 0.9 이상은 sigmoid로 부드럽게 압축
+    result = np.where(
+        normalized < threshold,
+        normalized,
+        threshold + (1.0 - threshold) * soft_mask
+    )
+    
+    # [-1, 1] 범위로 변환
+    result = 2.0 * result - 1.0
+    
+    return result
+
+
+def apply_hu_transform(dicom_img, hu_min, hu_max, use_soft_squeezing=True):
     """ DICOM 이미지를 HU 값으로 변환하고 정규화 """
     image = dicom_img.pixel_array.astype(np.float32)
     image = image * float(dicom_img.RescaleSlope) + float(dicom_img.RescaleIntercept)
     image = np.clip(image, hu_min, hu_max)
-    image = 2 * (image - hu_min) / (hu_max - hu_min) - 1
+    
+    if use_soft_squeezing:
+        image = apply_soft_squeezing(image, hu_min, hu_max)
+    else:
+        # 기존 선형 정규화
+        image = 2 * (image - hu_min) / (hu_max - hu_min) - 1
+    
     return image
 
 
