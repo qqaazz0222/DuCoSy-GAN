@@ -4,8 +4,8 @@
 source /opt/conda/etc/profile.d/conda.sh
 conda activate ducosygan
 
-# TARGET_MODEL=soft_tissue
-TARGET_MODEL=lung
+read -p "Enter the target model name (soft_tissue/lung): " TARGET_MODEL
+TARGET_MODEL=${TARGET_MODEL:-soft_tissue}
 # python train.py를 실행 (tmux를 활용하여 백그라운드에서 실행, 로그는 train_$(date +%Y%m%d%H%M%S).log에 저장)
 # Check if the session already exists
 if tmux has-session -t ducosygan_session 2>/dev/null; then
