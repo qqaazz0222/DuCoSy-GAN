@@ -7,10 +7,12 @@ def get_common_infer_args():
     
     # 경로 관련 인자
     parser.add_argument("--data_dir_root", type=str, default="./data", help="Root directory of the data")
-    parser.add_argument("--input_dir_root", type=str, default="./data/input", help="Root directory of the input datasets")
+    # parser.add_argument("--input_dir_root", type=str, default="./data/input", help="Root directory of the input datasets")
+    parser.add_argument("--input_dir_root", type=str, default="/archive/Dataset_DuCoSyGAN", help="Root directory of the input datasets")
     parser.add_argument("--working_dir_root", type=str, default="./data/working", help="Root directory for saving inference results")
     parser.add_argument("--output_dir_root", type=str, default="./data/output", help="Root directory for saving merged results")
-    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kyunghee_Univ"], help="List of dataset folder names to process")
+    # parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kyunghee_Univ"], help="List of dataset folder names to process")
+    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kyunghee_Univ_Chest"], help="List of dataset folder names to process")
     parser.add_argument("--ncct_folder", type=str, default="POST VUE", help="Folder name for non-contrast CT")
     parser.add_argument("--cect_folder", type=str, default="POST STD", help="Folder name for contrast-enhanced CT")
     parser.add_argument("--apply_masking", action='store_true', help="Whether to apply masking using TotalSegmentator")
@@ -56,7 +58,7 @@ def get_soft_tissue_infer_args():
     
     # 모델 및 전처리 관련 인자
     parser.add_argument("--hu_min", type=int, default=-150, help="Minimum HU value for clipping") 
-    parser.add_argument("--hu_max", type=int, default=400, help="Maximum HU value for clipping") 
+    parser.add_argument("--hu_max", type=int, default=250, help="Maximum HU value for clipping") 
     
     args = parser.parse_args()
 
@@ -117,7 +119,7 @@ def get_soft_tissue_train_args():
     """ Soft Tissue CycleGAN 훈련 인자 (고정값) """
     args = argparse.Namespace(
         hu_min=-150,
-        hu_max=400,
+        hu_max=250,
         window_width=400,
         window_center=40
     )

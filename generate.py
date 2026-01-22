@@ -255,12 +255,12 @@ def synthesis(args, soft_tissue_args, lung_args):
             
             # 1단계: z축 방향으로 가우시안 스무딩 적용 (슬라이스 간 급격한 변화 완화)
             from scipy.ndimage import gaussian_filter1d
-            merged_volume = gaussian_filter1d(merged_volume, sigma=1.2, axis=0)
+            merged_volume = gaussian_filter1d(merged_volume, sigma=0.8, axis=0)
             
             # 2단계: 3D 가우시안 필터로 전체적인 스무딩 및 선명도 향상
             merged_volume = postprocess_ct_volume(merged_volume, method='gaussian3d', 
-                sigma_z=1.1, sigma_xy=0.1,
-                enhance_sharpness=True, sharpen_amount=1.3, sharpen_radius=1.0,)
+                sigma_z=0.7, sigma_xy=0.05,
+                enhance_sharpness=True, sharpen_amount=1.7, sharpen_radius=1.2,)
             
             # 후처리된 슬라이스 저장
             for idx, soft_tissue_dcm_path in enumerate(soft_tissue_dcm_list):
@@ -297,6 +297,184 @@ def synthesis(args, soft_tissue_args, lung_args):
                     exit()
                     
     print("\nSynthesis complete.")
+    
+    
+def synthesis_test(args, soft_tissue_args, lung_args):
+    """조영효과가 나타난 부분만 NCCT에 차이값을 더하는 방식의 합성 (테스트용)"""
+
+    def get_hu_array(dcm):
+        """DICOM 객체에서 HU 배열을 추출하는 헬퍼 함수"""
+        intercept = dcm.RescaleIntercept if 'RescaleIntercept' in dcm else 0
+        slope = dcm.RescaleSlope if 'RescaleSlope' in dcm else 1
+        hu_array = dcm.pixel_array.astype(np.float32) * slope + intercept
+        return hu_array
+    
+    # 노말 모델 설정
+    # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # nmodel, _config = load_model(args.nmodel_path, device)
+    
+    # 각 데이터셋 폴더 순회
+    for dataset_name in args.dataset_names:
+        working_dir = os.path.join(args.working_dir_root, dataset_name)
+        output_dir = os.path.join(args.output_dir_root, dataset_name)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        print(f"\nSynthesizing dataset (Test Mode - Enhancement Difference): {dataset_name}")
+
+        # 환자 디렉토리 검색
+        patient_dirs = sorted([d for d in glob.glob(os.path.join(working_dir, '*')) if os.path.isdir(d)])
+        
+        # 환자 디렉토리 순회
+        for patient_dir in tqdm(patient_dirs, desc=f"Patients in {dataset_name}"):
+            patient_id = os.path.basename(patient_dir)
+            raw_base_path = os.path.join(patient_dir, "raw")
+            soft_tissue_base_path = os.path.join(patient_dir, "soft_tissue")
+            lung_base_path = os.path.join(patient_dir, "lung")
+            output_base_path = os.path.join(output_dir, patient_id)
+            os.makedirs(output_base_path, exist_ok=True)
+
+            raw_dcm_list = sorted(glob.glob(os.path.join(raw_base_path, "*.dcm")))
+            if not raw_dcm_list:
+                print(f"No raw DICOM files found for patient {patient_id}. Skipping integration.")
+                continue
+            soft_tissue_dcm_list = sorted(glob.glob(os.path.join(soft_tissue_base_path, "*.dcm")))
+            if not soft_tissue_dcm_list:
+                print(f"No soft tissue DICOM files found for patient {patient_id}. Skipping integration.")
+                continue
+            lung_dcm_list = sorted(glob.glob(os.path.join(lung_base_path, "*.dcm")))
+            if not lung_dcm_list:
+                print(f"No lung DICOM files found for patient {patient_id}. Skipping synthesis.")
+                continue
+            if len(raw_dcm_list) != len(soft_tissue_dcm_list) != len(lung_dcm_list):
+                print(f"Warning: Mismatch in number of DICOM files for patient {patient_id}. Raw: {len(raw_dcm_list)}, Soft tissue: {len(soft_tissue_dcm_list)}, Lung: {len(lung_dcm_list)}. Proceeding with integration.")
+                continue
+            
+            raw_volume = []
+            merged_volume = []
+
+            for idx, (raw_dcm_path, soft_tissue_dcm_path, lung_dcm_path) in enumerate(zip(raw_dcm_list, soft_tissue_dcm_list, lung_dcm_list)):
+                try:
+                    if os.path.basename(raw_dcm_path) != os.path.basename(soft_tissue_dcm_path) != os.path.basename(lung_dcm_path):
+                        print(f"Warning: Filename mismatch between soft tissue and lung DICOM files: {soft_tissue_dcm_path} vs {lung_dcm_path}. Skipping this pair.")
+                        continue
+
+                    # DICOM 파일 로드
+                    raw_dcm = pydicom.dcmread(raw_dcm_path)
+                    soft_tissue_dcm = pydicom.dcmread(soft_tissue_dcm_path)
+                    lung_dcm = pydicom.dcmread(lung_dcm_path)
+                    
+                    # 픽셀 데이터 존재 여부 확인
+                    if not hasattr(raw_dcm, 'PixelData') or raw_dcm.PixelData is None:
+                        print(f"Warning: No pixel data in raw DICOM file {raw_dcm_path}. Skipping.")
+                        continue
+                    if not hasattr(soft_tissue_dcm, 'PixelData') or soft_tissue_dcm.PixelData is None:
+                        print(f"Warning: No pixel data in soft tissue DICOM file {soft_tissue_dcm_path}. Skipping.")
+                        continue
+                    if not hasattr(lung_dcm, 'PixelData') or lung_dcm.PixelData is None:
+                        print(f"Warning: No pixel data in lung DICOM file {lung_dcm_path}. Skipping.")
+                        continue
+                    
+                    # 이미지 로드
+                    raw_pixel_array = raw_dcm.pixel_array.astype(np.float32)
+                    soft_tissue_pixel_array = soft_tissue_dcm.pixel_array.astype(np.float32)
+                    lung_pixel_array = lung_dcm.pixel_array.astype(np.float32)
+                    
+                    # NCCT 영상을 기본으로 시작
+                    merged_pixel_array = raw_pixel_array.copy()
+                    
+                    # HU 배열 계산
+                    raw_hu_array = get_hu_array(raw_dcm)
+                    soft_tissue_hu_array = get_hu_array(soft_tissue_dcm)
+                    lung_hu_array = get_hu_array(lung_dcm)
+                    
+                    # 각 모델의 조영효과 (차이값) 계산
+                    soft_tissue_enhancement = soft_tissue_hu_array - raw_hu_array
+                    lung_enhancement = lung_hu_array - raw_hu_array
+                    
+                    # -960 이하의 값은 조영효과 적용 제외 (공기/폐 영역 보존)
+                    valid_hu_mask = raw_hu_array > -400
+                    
+                    # 조영효과가 유의미한 부분만 선택 (threshold: 5 HU 이상 증가)
+                    enhancement_threshold = 5.0
+                    soft_tissue_enhanced_mask = (soft_tissue_enhancement > enhancement_threshold) & valid_hu_mask
+                    lung_enhanced_mask = (lung_enhancement > enhancement_threshold) & valid_hu_mask
+                    
+                    # NCCT 영상에 조영효과 차이값을 더하기
+                    # Rescale 파라미터 확인
+                    intercept = raw_dcm.RescaleIntercept if 'RescaleIntercept' in raw_dcm else 0
+                    slope = raw_dcm.RescaleSlope if 'RescaleSlope' in raw_dcm else 1
+                    
+                    # Soft tissue 영역 적용
+                    if np.any(soft_tissue_enhanced_mask):
+                        pixel_diff = soft_tissue_enhancement[soft_tissue_enhanced_mask] / slope
+                        merged_pixel_array[soft_tissue_enhanced_mask] += pixel_diff
+                    
+                    # Lung 영역 적용
+                    if np.any(lung_enhanced_mask):
+                        pixel_diff = lung_enhancement[lung_enhanced_mask] / slope
+                        merged_pixel_array[lung_enhanced_mask] += pixel_diff
+                    
+                    raw_volume.append(raw_hu_array)
+                    merged_volume.append(merged_pixel_array)
+                    
+                except Exception as e:
+                    print(f"Error Occurred: error on processing file {soft_tissue_dcm_path}. Message: {e}")
+                    traceback.print_exc()
+                    exit()
+
+            # 후처리 적용 (기능은 구현되었지만 비활성화)
+            # raw_volume = np.array(raw_volume, dtype=np.float64)
+            # diff_volume = predict_volume(nmodel, raw_volume, device, device=='cuda')
+            # np.save(os.path.join(patient_dir, f"diff.npy"), diff_volume)
+            # merged_volume = apply_diffmap(merged_volume, diff_volume)
+            
+            # z축 방향 연결성 개선을 위한 전처리 스무딩
+            merged_volume = np.array(merged_volume, dtype=np.float32)
+            
+            # 1단계: z축 방향으로 가우시안 스무딩 적용 (슬라이스 간 급격한 변화 완화)
+            from scipy.ndimage import gaussian_filter1d
+            merged_volume = gaussian_filter1d(merged_volume, sigma=0.8, axis=0)
+            
+            # 2단계: 3D 가우시안 필터로 전체적인 스무딩 및 선명도 향상
+            merged_volume = postprocess_ct_volume(merged_volume, method='gaussian3d', 
+                sigma_z=0.7, sigma_xy=0.05,
+                enhance_sharpness=True, sharpen_amount=1.7, sharpen_radius=1.2,)
+            
+            # 후처리된 슬라이스 저장
+            for idx, soft_tissue_dcm_path in enumerate(soft_tissue_dcm_list):
+                try:
+                    soft_tissue_dcm = pydicom.dcmread(soft_tissue_dcm_path)
+                    merged_pixel_array = merged_volume[idx]
+
+                    # 최종 DICOM 객체 생성 및 저장
+                    output_dcm = soft_tissue_dcm.copy()
+                    output_dcm.window_center = args.window_center
+                    output_dcm.window_width = args.window_width
+                    output_dcm.PixelData = merged_pixel_array.tobytes()
+                    
+                    # VR 에러 해결 및 메타데이터 업데이트
+                    if output_dcm.PixelRepresentation == 0:
+                        vr = 'US'
+                    else:
+                        vr = 'SS'
+                    output_dcm.add_new((0x0028, 0x0106), vr, int(merged_pixel_array.min()))
+                    output_dcm.add_new((0x0028, 0x0107), vr, int(merged_pixel_array.max()))
+                    
+                    full_range_width = 250 - (-1000)
+                    full_range_center = -1000 + (full_range_width / 2)
+                    output_dcm.WindowWidth = full_range_width
+                    output_dcm.WindowCenter = full_range_center
+                    output_dcm.SeriesDescription = "DuCoSyGAN sCECT v3"
+                    
+                    output_dcm_path = os.path.join(output_base_path, f"{idx:04d}.dcm")
+                    output_dcm.save_as(output_dcm_path)
+                    
+                except Exception as e:
+                    print(f"Error Occurred: error on processing file {soft_tissue_dcm_path}. Message: {e}")
+                    traceback.print_exc()
+                    exit()
+                    
+    print("\nSynthesis complete.")
 
 
 if __name__ == "__main__":
@@ -311,6 +489,7 @@ if __name__ == "__main__":
     
     # 합성 실행
     synthesis(args, soft_tissue_args, lung_args)
+    # synthesis_test(args, soft_tissue_args, lung_args)
 
     print("\nAll processing complete!")
     print(f" - Final synthesized DICOM files are saved in: {args.output_dir_root}")
