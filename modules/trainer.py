@@ -212,9 +212,17 @@ def validate_and_save_images(epoch, models, val_dataloader, criteria, args, devi
 
             fake_B, fake_A = G_A2B(real_A_input), G_B2A(real_B_input)
             
+            # Cycle consistency를 위해 fake_B와 fake_A에도 마스크 결합
+            if "masks" in batch:
+                fake_B_input = torch.cat([fake_B, masks], dim=1)
+                fake_A_input = torch.cat([fake_A, masks], dim=1)
+            else:
+                fake_B_input = fake_B
+                fake_A_input = fake_A
+            
             loss_id = (criterion_identity(G_B2A(real_A_input), real_A) + criterion_identity(G_A2B(real_B_input), real_B)) / 2
             loss_GAN = (criterion_GAN(D_B(fake_B), valid) + criterion_GAN(D_A(fake_A), valid)) / 2
-            loss_cycle = (criterion_cycle(G_B2A(fake_B), real_A) + criterion_cycle(G_A2B(fake_A), real_B)) / 2
+            loss_cycle = (criterion_cycle(G_B2A(fake_B_input), real_A) + criterion_cycle(G_A2B(fake_A_input), real_B)) / 2
             
             loss_G = loss_GAN + args.lambda_cyc * loss_cycle + args.lambda_id * loss_id
             total_val_loss_G += loss_G.item()
