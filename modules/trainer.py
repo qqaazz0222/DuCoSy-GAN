@@ -425,7 +425,14 @@ def train_cycle_gan(args, target_range):
             loss_GAN = (criterion_GAN(D_B(fake_B), valid) + criterion_GAN(D_A(fake_A), valid)) / 2
             
             # Reconstruction (Cycle consistency)
-            rec_A, rec_B = G_B2A(fake_B), G_A2B(fake_A)
+            # fake_B와 fake_A에도 마스크를 결합하여 입력
+            if "masks" in batch:
+                fake_B_input = torch.cat([fake_B, masks], dim=1)
+                fake_A_input = torch.cat([fake_A, masks], dim=1)
+            else:
+                fake_B_input = fake_B
+                fake_A_input = fake_A
+            rec_A, rec_B = G_B2A(fake_B_input), G_A2B(fake_A_input)
             
             loss_cycle = (criterion_cycle(rec_A, real_A) + criterion_cycle(rec_B, real_B)) / 2
             loss_grad_cycle = (criterion_gradient(rec_A, real_A) + criterion_gradient(rec_B, real_B)) / 2

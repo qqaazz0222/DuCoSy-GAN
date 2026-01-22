@@ -137,8 +137,17 @@ class DicomDataset(Dataset):
                     for mask_type in self.mask_types:
                         if mask_type in masks_dict:
                             mask = masks_dict[mask_type]
-                            if self.transform:
-                                mask = self.transform(mask)
+                            # 자동 생성된 마스크는 이미 torch.Tensor이므로
+                            # 크기만 조정 (ToTensor 변환 제외)
+                            if mask.dim() == 2:  # [H, W]
+                                mask = mask.unsqueeze(0)  # [1, H, W]로 변환
+                            # 크기 조정이 필요한 경우 (ncct_img와 크기가 다른 경우)
+                            if mask.shape[-2:] != ncct_img.shape[-2:]:
+                                mask = torch.nn.functional.interpolate(
+                                    mask.unsqueeze(0), 
+                                    size=ncct_img.shape[-2:], 
+                                    mode='nearest'
+                                ).squeeze(0)
                             masks.append(mask)
                         else:
                             # 생성 실패 시 0으로 채운 마스크
