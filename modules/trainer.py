@@ -189,70 +189,107 @@ def validate_and_save_images(epoch, models, val_dataloader, criteria, args, devi
     G_A2B, G_B2A, D_A, D_B = models
     criterion_GAN, criterion_cycle, criterion_identity = criteria
     
-    G_A2B.eval()
-    G_B2A.eval()
+    # DataParallel 모델에서 단일 GPU 모델 추출 (메모리 정렬 오류 방지)
+    G_A2B_single = G_A2B.module if isinstance(G_A2B, nn.DataParallel) else G_A2B
+    G_B2A_single = G_B2A.module if isinstance(G_B2A, nn.DataParallel) else G_B2A
+    D_A_single = D_A.module if isinstance(D_A, nn.DataParallel) else D_A
+    D_B_single = D_B.module if isinstance(D_B, nn.DataParallel) else D_B
+    
+    G_A2B_single.eval()
+    G_B2A_single.eval()
     
     total_val_loss_G = 0
+    num_batches = 0
     
-    # 1. Validation Loss 계산
+    # CUDA 동기화 및 캐시 정리
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+    
+    # 1. Validation Loss 계산 (단일 GPU 사용)
     with torch.no_grad():
         for i, batch in enumerate(val_dataloader):
-            real_A, real_B = batch["A"].to(device), batch["B"].to(device)
+            try:
+                real_A = batch["A"].to(device)
+                real_B = batch["B"].to(device)
+                
+                # 마스크가 있으면 입력에 결합
+                if "masks" in batch:
+                    masks = batch["masks"].to(device)
+                    real_A_input = torch.cat([real_A, masks], dim=1)
+                    real_B_input = torch.cat([real_B, masks], dim=1)
+                else:
+                    real_A_input = real_A
+                    real_B_input = real_B
+                
+                valid = torch.ones((real_A.size(0), 1, args.img_size // 16, args.img_size // 16), 
+                                   requires_grad=False, device=device)
+
+                fake_B = G_A2B_single(real_A_input)
+                fake_A = G_B2A_single(real_B_input)
+                
+                # Cycle consistency를 위해 fake_B와 fake_A에도 마스크 결합
+                if "masks" in batch:
+                    fake_B_input = torch.cat([fake_B, masks], dim=1)
+                    fake_A_input = torch.cat([fake_A, masks], dim=1)
+                else:
+                    fake_B_input = fake_B
+                    fake_A_input = fake_A
+                
+                rec_A = G_B2A_single(fake_B_input)
+                rec_B = G_A2B_single(fake_A_input)
+                id_A = G_B2A_single(real_A_input)
+                id_B = G_A2B_single(real_B_input)
+                
+                loss_id = (criterion_identity(id_A, real_A) + criterion_identity(id_B, real_B)) / 2
+                loss_GAN = (criterion_GAN(D_B_single(fake_B), valid) + criterion_GAN(D_A_single(fake_A), valid)) / 2
+                loss_cycle = (criterion_cycle(rec_A, real_A) + criterion_cycle(rec_B, real_B)) / 2
+                
+                loss_G = loss_GAN + args.lambda_cyc * loss_cycle + args.lambda_id * loss_id
+                total_val_loss_G += loss_G.item()
+                num_batches += 1
+                    
+            except Exception as e:
+                print(f"Warning: Validation batch {i} skipped due to error: {e}")
+                continue
+    
+    avg_val_loss = total_val_loss_G / max(num_batches, 1)
+    
+    # CUDA 동기화 및 캐시 정리
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+
+    # 2. 고정된 배치로 샘플 이미지 저장 (단일 GPU 사용)
+    with torch.no_grad():
+        try:
+            real_A = fixed_val_batch["A"].to(device)
+            real_B = fixed_val_batch["B"].to(device)
             
             # 마스크가 있으면 입력에 결합
-            if "masks" in batch:
-                masks = batch["masks"].to(device)
+            if "masks" in fixed_val_batch:
+                masks = fixed_val_batch["masks"].to(device)
                 real_A_input = torch.cat([real_A, masks], dim=1)
-                real_B_input = torch.cat([real_B, masks], dim=1)
             else:
                 real_A_input = real_A
-                real_B_input = real_B
             
-            valid = torch.ones((real_A.size(0), 1, args.img_size // 16, args.img_size // 16), requires_grad=False).to(device)
+            fake_B = G_A2B_single(real_A_input)
 
-            fake_B, fake_A = G_A2B(real_A_input), G_B2A(real_B_input)
-            
-            # Cycle consistency를 위해 fake_B와 fake_A에도 마스크 결합
-            if "masks" in batch:
-                fake_B_input = torch.cat([fake_B, masks], dim=1)
-                fake_A_input = torch.cat([fake_A, masks], dim=1)
-            else:
-                fake_B_input = fake_B
-                fake_A_input = fake_A
-            
-            loss_id = (criterion_identity(G_B2A(real_A_input), real_A) + criterion_identity(G_A2B(real_B_input), real_B)) / 2
-            loss_GAN = (criterion_GAN(D_B(fake_B), valid) + criterion_GAN(D_A(fake_A), valid)) / 2
-            loss_cycle = (criterion_cycle(G_B2A(fake_B_input), real_A) + criterion_cycle(G_A2B(fake_A_input), real_B)) / 2
-            
-            loss_G = loss_GAN + args.lambda_cyc * loss_cycle + args.lambda_id * loss_id
-            total_val_loss_G += loss_G.item()
+            real_A_win = apply_windowing(real_A, args)
+            real_B_win = apply_windowing(real_B, args)
+            fake_B_win = apply_windowing(fake_B, args)
 
-    avg_val_loss = total_val_loss_G / len(val_dataloader)
-
-    # 2. 고정된 배치로 샘플 이미지 저장
-    with torch.no_grad():
-        real_A = fixed_val_batch["A"].to(device)
-        real_B = fixed_val_batch["B"].to(device)
-        
-        # 마스크가 있으면 입력에 결합
-        if "masks" in fixed_val_batch:
-            masks = fixed_val_batch["masks"].to(device)
-            real_A_input = torch.cat([real_A, masks], dim=1)
-        else:
-            real_A_input = real_A
-        
-        fake_B = G_A2B(real_A_input)
-
-        real_A_win = apply_windowing(real_A, args)
-        real_B_win = apply_windowing(real_B, args)
-        fake_B_win = apply_windowing(fake_B, args)
-
-        image_grid = torch.cat((real_A_win, fake_B_win, real_B_win), -1)
-        save_path = os.path.join(args.training_dir, "images", f"epoch_{epoch+1}.jpg")
-        save_image(image_grid, save_path, nrow=min(real_A.size(0), 4), normalize=False) # nrow를 조절하여 보기 좋게 저장
+            image_grid = torch.cat((real_A_win, fake_B_win, real_B_win), -1)
+            save_path = os.path.join(args.training_dir, "images", f"epoch_{epoch+1}.jpg")
+            save_image(image_grid, save_path, nrow=min(real_A.size(0), 4), normalize=False)
+                
+        except Exception as e:
+            print(f"Warning: Failed to save sample images: {e}")
         
     G_A2B.train()
     G_B2A.train()
+    
+    # 최종 메모리 정리
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
     
     return avg_val_loss
 
@@ -499,6 +536,10 @@ def train_cycle_gan(args, target_range):
         scheduler_D_B.step()
         
         # --- 에폭 종료 후 검증, 모델 저장, 체크포인트 저장 ---
+        # CUDA 동기화 및 캐시 정리 (메모리 정렬 오류 방지)
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        
         val_loss = validate_and_save_images(
             epoch, (G_A2B, G_B2A, D_A, D_B), val_dataloader,
             (criterion_GAN, criterion_cycle, criterion_identity), args, device, fixed_val_batch

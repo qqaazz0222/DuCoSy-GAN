@@ -12,7 +12,7 @@ def get_common_infer_args():
     parser.add_argument("--working_dir_root", type=str, default="./data/working", help="Root directory for saving inference results")
     parser.add_argument("--output_dir_root", type=str, default="./data/output", help="Root directory for saving merged results")
     # parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kyunghee_Univ"], help="List of dataset folder names to process")
-    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kangwon_National_Univ_Masked"], help="List of dataset folder names to process")
+    parser.add_argument("--dataset_names", type=str, nargs='+', default=["Kangwon_National_Univ_Masked_10"], help="List of dataset folder names to process")
     parser.add_argument("--ncct_folder", type=str, default="POST VUE", help="Folder name for non-contrast CT")
     parser.add_argument("--cect_folder", type=str, default="POST STD", help="Folder name for contrast-enhanced CT")
     parser.add_argument("--apply_masking", action='store_true', help="Whether to apply masking using TotalSegmentator")
@@ -100,8 +100,8 @@ def get_common_train_args():
     
     # 데이터 및 경로 관련 인자
     parser.add_argument("--training_dir", type=str, default="./training_dir", help="Directory to save model checkpoints")
-    parser.add_argument("--dataset_names", type=str, default="Kangwon_National_Univ_Chest", help="List of dataset folder names for train")
     parser.add_argument("--data_root", type=str, default="/workspace/Contrast_CT/hyunsu/Dataset_DucosyGAN", help="Root directory of the dataset")
+    parser.add_argument("--dataset_names", type=str, default="Kangwon_National_Univ_Masked_10", help="List of dataset folder names for train")
     parser.add_argument("--ncct_folder", type=str, default="POST VUE", help="Folder name for non-contrast CT")
     parser.add_argument("--cect_folder", type=str, default="POST STD", help="Folder name for contrast-enhanced CT")
     parser.add_argument("--resume", type=str, default="checkpoint.pth.tar", help="Path to latest checkpoint (default: checkpoint.pth.tar in saved_models_dir)")
